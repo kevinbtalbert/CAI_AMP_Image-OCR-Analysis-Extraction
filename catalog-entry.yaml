@@ -1,49 +1,50 @@
 name: Cloudera Image Analysis
-description: >
-  Extract, transcribe, and analyze content from document images using local vision AI
-  powered by Ollama and Qwen2.5-VL — running entirely on-cluster with no external API
-  dependencies. Supports verbatim OCR, handwritten text digitization, form extraction,
-  document Q&A, JSON conversion, and image summarization, with batch processing and
-  a built-in job queue.
-long_description: >
-  This Accelerator for ML Projects (AMP) provides a production-ready image analysis
-  platform that runs 100% on your CML cluster using local GPU resources.
 
-  The default model is Qwen2.5-VL 7B — purpose-built for document understanding,
-  scoring 864/1000 on OCRBench and 95.7% on DocVQA, outperforming GPT-4o-mini on
-  document tasks. A 32B variant is also available for the highest fidelity.
+entries:
+  - title: Cloudera Image Analysis
+    label: cloudera-image-analysis
+    short_description: |
+      Verbatim OCR, document transcription, and structured extraction from images using local vision AI — powered by Qwen2.5-VL and Ollama, running entirely on-cluster.
+    long_description: |
+      Upload images and let local AI do the heavy lifting — no external APIs, no data leaving your cluster.
 
-  Output guardrails use Ollama's grammar-constrained structured output (JSON Schema
-  enforced at the token-sampling level via GBNF grammars), ensuring results conform
-  exactly to the expected structure without post-hoc string filtering.
+      Powered by Qwen2.5-VL and Ollama running on your CML GPU, this AMP gives you six ready-to-use analysis modes:
 
-  Key capabilities:
-  - Verbatim typed text transcription (OCR)
-  - Handwritten note digitisation
-  - Structured form field extraction
-  - Complex document question-answering
-  - Unstructured content to JSON conversion
-  - Image summarization
+      - Transcribe typed or handwritten text verbatim
+      - Extract every field from a form as structured data
+      - Ask questions about a document and get cited answers
+      - Convert any document into clean, structured JSON
+      - Summarize image content in plain language
 
-  Additional features:
-  - Streaming token-by-token results with Stop button
-  - Batch processing with background job queue
-  - Folder management with per-folder result downloads
-  - GPU VRAM monitoring and model pre-warming
-  - Personalized UI using CML environment variables
-  - Cloudera Workbench design system styling
+      Upload a single image for instant streaming results, or queue a batch of files to process in the background. Results are saved automatically and downloadable as a ZIP.
 
-tags:
-  - OCR
-  - Image Analysis
-  - Document Extraction
-  - Vision LLM
-  - Qwen2.5-VL
-  - Ollama
-  - Local AI
-  - Transcription
-  - GPU
-  - Structured Output
-  - FastAPI
-
-git_url: "https://github.com/cloudera/CAI_AMP_Image-OCR-Analysis-Extraction"
+      ---------------------------
+      IMPORTANT: Please read the following before proceeding.
+      This AMP includes or otherwise depends on certain third-party software packages.
+      Information about such third-party software packages are made available in the notice file associated with this AMP.
+      By configuring and launching this AMP, you will cause such third-party software packages to be downloaded and installed
+      into your environment, in some instances, from third parties' websites.
+      For each third-party software package, please see the notice file and the applicable websites for more information,
+      including the applicable license terms.
+      If you do not wish to download and install the third-party software packages,
+      do not configure, launch, or otherwise use this AMP.
+      By configuring, launching, or otherwise using the AMP, you acknowledge the foregoing statement and
+      agree that Cloudera is not responsible or liable in any way for the third-party software packages.
+    image_path: "https://github.com/cloudera/CAI_AMP_Image-OCR-Analysis-Extraction/raw/main/assets/preview.png"
+    tags:
+      - OCR
+      - Image Analysis
+      - Document Extraction
+      - Vision LLM
+      - Qwen2.5-VL
+      - Ollama
+      - Local AI
+      - Transcription
+      - GPU
+      - Structured Output
+      - FastAPI
+    git_url: "https://github.com/cloudera/CAI_AMP_Image-OCR-Analysis-Extraction.git"
+    git_ref: "main"
+    is_prototype: true
+    is_community: false
+    is_new: true

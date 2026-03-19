@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloudera Image Analysis — AMP Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%;
+    height: 100%;
+  }
+  body {
+    background: #0e1c26;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Roboto', sans-serif;
+  }
+
+  .card {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    overflow: hidden;
+    position: relative;
+    background: #0e1c26;
+  }
+
+  /* Deep background gradient */
+  .card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 65% 65% at 58% 42%, rgba(0,100,190,0.28) 0%, transparent 65%),
+      radial-gradient(ellipse 35% 35% at 12% 88%, rgba(76,207,76,0.08) 0%, transparent 55%),
+      linear-gradient(145deg, #0e1c26 0%, #112030 100%);
+  }
+
+  .content {
+    position: relative;
+    z-index: 1;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4vh;
+    padding: 0 36px;
+  }
+
+  /* Central icon composition */
+  .icon-group {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4vw;
+  }
+
+  /* Document icon */
+  .doc-icon {
+    width: 18vw;
+    height: 22vh;
+    border-radius: 7px;
+    background: #1a3045;
+    border: 2px solid rgba(76,207,76,0.5);
+    box-shadow: 0 0 44px rgba(76,207,76,0.2), inset 0 0 16px rgba(0,0,0,0.3);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1.4vh;
+    padding: 2.5vh 2vw;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .doc-icon::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent 5%, #4ccf4c 50%, transparent 95%);
+    box-shadow: 0 0 14px rgba(76,207,76,0.8);
+    animation: scan 2.4s ease-in-out infinite;
+  }
+  @keyframes scan {
+    0%   { top: 8%;  opacity: 0; }
+    8%   { opacity: 1; }
+    92%  { opacity: 1; }
+    100% { top: 90%; opacity: 0; }
+  }
+
+  .line {
+    height: 0.8vh;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.15);
+  }
+  .line.w100 { width: 100%; }
+  .line.w75  { width: 75%; }
+  .line.w55  { width: 55%; }
+  .line.w90  { width: 90%; }
+  .line.accent {
+    background: rgba(76,207,76,0.55);
+    width: 45%;
+  }
+
+  /* Arrow */
+  .arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .arrow svg {
+    animation: nudge 1.8s ease-in-out infinite;
+    width: 5vw; height: auto;
+  }
+  @keyframes nudge {
+    0%, 100% { transform: translateX(0); opacity: 0.6; }
+    50%       { transform: translateX(0.5vw); opacity: 1; }
+  }
+
+  /* Magnifier icon */
+  .magnifier {
+    width: 18vw;
+    height: 22vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .magnifier svg {
+    width: 15vw;
+    height: auto;
+    filter: drop-shadow(0 0 2vw rgba(0,140,255,0.6));
+  }
+
+  /* Title */
+  .title {
+    font-size: 6vw;
+    font-weight: 500;
+    color: #ffffff;
+    letter-spacing: -0.05vw;
+    text-align: center;
+    line-height: 1.1;
+    text-shadow: 0 2px 3vw rgba(0,100,200,0.4);
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="content">
+
+    <div class="icon-group">
+      <!-- Document with scan line -->
+      <div class="doc-icon">
+        <div class="line accent"></div>
+        <div class="line w100"></div>
+        <div class="line w75"></div>
+        <div class="line w90"></div>
+        <div class="line w55"></div>
+        <div class="line w100"></div>
+        <div class="line w75"></div>
+      </div>
+
+      <!-- Arrow -->
+      <div class="arrow">
+        <svg width="40" height="20" viewBox="0 0 40 20" fill="none">
+          <path d="M0 10 H32 M24 3 L34 10 L24 17" stroke="#4ccf4c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+
+      <!-- Magnifier -->
+      <div class="magnifier">
+        <svg width="82" height="82" viewBox="0 0 62 62" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- circle -->
+          <circle cx="26" cy="26" r="18" stroke="#008cff" stroke-width="3.5" fill="rgba(0,116,210,0.12)"/>
+          <!-- inner glow circle -->
+          <circle cx="26" cy="26" r="12" fill="rgba(0,140,255,0.08)" stroke="rgba(0,140,255,0.25)" stroke-width="1"/>
+          <!-- text lines inside lens -->
+          <line x1="19" y1="22" x2="33" y2="22" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="19" y1="26" x2="31" y2="26" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="19" y1="30" x2="28" y2="30" stroke="rgba(76,207,76,0.6)" stroke-width="1.5" stroke-linecap="round"/>
+          <!-- handle -->
+          <line x1="39" y1="39" x2="54" y2="54" stroke="#008cff" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="title">Image &amp; OCR Analysis</div>
+
+  </div>
+</div>
+</body>
+</html>
