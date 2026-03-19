@@ -30,7 +30,7 @@ entries:
       do not configure, launch, or otherwise use this AMP.
       By configuring, launching, or otherwise using the AMP, you acknowledge the foregoing statement and
       agree that Cloudera is not responsible or liable in any way for the third-party software packages.
-    image_path: "https://github.com/cloudera/CAI_AMP_Image-OCR-Analysis-Extraction/raw/main/assets/preview.png"
+    image_path: "https://raw.githubusercontent.com/kevinbtalbert/CAI_AMP_Image-OCR-Analysis-Extraction/main/assets/preview.png"
     tags:
       - OCR
       - Image Analysis
