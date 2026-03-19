@@ -190,7 +190,7 @@ async function _globalOllamaCheck() {
     // ── Sidebar pills ──────────────────────────────────────────────────
     const statusPill = document.getElementById('sidebar-ollama-status');
     if (statusPill) {
-      statusPill.style.color = running ? 'var(--cldr-teal)' : 'var(--red)';
+      statusPill.style.color = '#ffffff';
       const gpuAvail = gpu.available && gpu.gpus && gpu.gpus.length > 0;
       statusPill.textContent = running
         ? (data.gpu_in_use ? '● Ollama · GPU active' : (gpuAvail ? '● Ollama · GPU ready' : '● Ollama · CPU'))
@@ -1067,7 +1067,7 @@ async function loadUserInfo() {
         const pill = document.createElement('span');
         pill.id = 'sidebar-user-pill';
         pill.className = 'model-pill';
-        pill.style.cssText = 'color:var(--cldr-teal);border-color:rgba(28,215,153,0.25);display:flex;align-items:center;gap:5px';
+        pill.style.cssText = 'color:#ffffff;border-color:var(--sb-border);display:flex;align-items:center;gap:5px';
         pill.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor" style="width:10px;height:10px"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-5.5-2.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM10 12a5.99 5.99 0 00-4.793 2.39A6.483 6.483 0 0010 16.5a6.483 6.483 0 004.793-2.11A5.99 5.99 0 0010 12z"/></svg>${escHtml(u.full_name || u.username)}`;
         pills.prepend(pill);
       }
