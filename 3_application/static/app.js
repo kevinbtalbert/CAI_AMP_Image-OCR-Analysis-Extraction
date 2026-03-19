@@ -5,27 +5,23 @@
 // ---------------------------------------------------------------------------
 
 const state = {
-  config: {},
-  uploads: [],
-  examples: [],
-  jobs: [],
+  config:        {},
+  uploads:       [],
+  examples:      [],
+  jobs:          [],
   batchSelected: new Set(),
-  pollTimer: null,
+  pollTimer:     null,
 };
 
 // ---------------------------------------------------------------------------
 // Active-operations tracker
-// Keeps a count per category; drives the global rail and header chip.
+// Drives the global progress rail + header chip.
 // ---------------------------------------------------------------------------
 
 const _ops = { uploads: 0, processing: 0, batch: 0, pull: 0 };
 
 function setActive(type, value) {
-  if (typeof value === 'boolean') {
-    _ops[type] = value ? 1 : 0;
-  } else {
-    _ops[type] = Math.max(0, value);
-  }
+  _ops[type] = typeof value === 'boolean' ? (value ? 1 : 0) : Math.max(0, value);
   _updateGlobalProgress();
 }
 
@@ -52,6 +48,10 @@ function _updateGlobalProgress() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+
 const PAGE_TITLES = {
   analysis: 'Image Analysis',
   batch:    'Batch Process',
@@ -67,10 +67,6 @@ const USE_CASE_HINTS = {
   'Complicated Document QA':       'Ask a specific question and receive an answer grounded in the document content.',
   'Unstructured Information → JSON':'Convert the document content into machine-readable structured JSON.',
 };
-
-// ---------------------------------------------------------------------------
-// Navigation
-// ---------------------------------------------------------------------------
 
 function navigate(section) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -125,10 +121,7 @@ async function api(method, path, body) {
 async function init() {
   try {
     state.config = await api('GET', '/api/config');
-    _currentMode = state.config.service_mode || 'cloudera';
-    updateStatusChips();
-    updateConfigDot();
-    updateModeIndicator();
+    updateSidebarPills();
   } catch (e) {
     console.error('Init error', e);
   }
@@ -137,49 +130,58 @@ async function init() {
   onSingleUseCaseChange();
   refreshSingleImageSelect();
 
-  // Poll jobs every 2 s (always-on, regardless of current section)
-  state.pollTimer = setInterval(pollJobs, 2000);
-
-  // If local mode, start global Ollama background poller so pull progress
-  // and status are tracked even when the user is on a different section.
-  if (_currentMode === 'local') _startGlobalOllama();
+  // Always-on: poll job queue + Ollama status
+  state.pollTimer   = setInterval(pollJobs,        2000);
+  state.ollamaTimer = setInterval(_globalOllamaCheck, 5000);
+  _globalOllamaCheck();   // immediate first check
 
   navigate('analysis');
 }
 
 // ---------------------------------------------------------------------------
-// Status chips
+// Ollama header chip
 // ---------------------------------------------------------------------------
 
-function updateStatusChips() {
-  const cfg  = state.config;
-  const mode = cfg.service_mode || 'cloudera';
+async function _globalOllamaCheck() {
+  try {
+    const data    = await api('GET', '/api/ollama/status');
+    const running = data.running;
+    const pulling = !!(data.pull && data.pull.running);
 
-  if (mode === 'local') {
-    setDot('dot-ocr', 'ok');   // No separate OCR in local mode
-    setDot('dot-llm', 'ok');   // Will validate when Ollama status is checked
-    document.getElementById('status-ocr').title = 'Local mode — vision LLM handles OCR';
-    document.getElementById('status-llm').title = `Ollama: ${cfg.local_model || 'llava:7b'}`;
-  } else {
-    const hasToken = cfg.has_token;
-    setDot('dot-ocr', hasToken && cfg.ocr_endpoint_url ? 'ok' : 'error');
-    setDot('dot-llm', hasToken && cfg.llm_endpoint_url ? 'ok' : 'error');
-    document.getElementById('status-ocr').title = 'NeMo Retriever-Parse endpoint';
-    document.getElementById('status-llm').title = 'Llama 3.3 70B endpoint';
-  }
+    setActive('pull', pulling);
+
+    // Update header chip
+    setDot('dot-ollama', running ? 'ok' : 'error');
+    const lbl = document.getElementById('ollama-chip-label');
+    if (lbl) lbl.textContent = running
+      ? `Ollama · ${state.config.local_model || ''}`
+      : 'Ollama offline';
+
+    // Update sidebar pills
+    const statusPill = document.getElementById('sidebar-ollama-status');
+    if (statusPill) {
+      statusPill.style.color = running ? 'var(--cldr-teal)' : 'var(--red)';
+      statusPill.textContent = running ? '● Ollama' : '○ Ollama';
+    }
+
+    // Update config-dot warning if Ollama is not running
+    const configDot = document.getElementById('config-dot');
+    if (configDot) {
+      configDot.className = `nav-dot ${running ? 'success' : 'warning'}`;
+    }
+  } catch (_) {}
 }
 
 function setDot(id, status) {
   const el = document.getElementById(id);
+  if (!el) return;
   el.className = 'status-dot';
   if (status) el.classList.add(status);
 }
 
-function updateConfigDot() {
-  const cfg = state.config;
-  const ok = cfg.has_token && cfg.ocr_endpoint_url && cfg.llm_endpoint_url;
-  const dot = document.getElementById('config-dot');
-  dot.className = `nav-dot ${ok ? 'success' : 'warning'}`;
+function updateSidebarPills() {
+  const namePill = document.getElementById('sidebar-model-name');
+  if (namePill) namePill.textContent = state.config.local_model || 'llama3.2-vision:11b';
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +190,7 @@ function updateConfigDot() {
 
 async function refreshImages() {
   try {
-    const data = await api('GET', '/api/images');
+    const data     = await api('GET', '/api/images');
     state.uploads  = data.uploads  || [];
     state.examples = data.examples || [];
   } catch (e) {
@@ -197,8 +199,8 @@ async function refreshImages() {
 }
 
 function formatBytes(b) {
-  if (b < 1024)       return b + ' B';
-  if (b < 1048576)    return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1024)    return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
   return (b / 1048576).toFixed(1) + ' MB';
 }
 
@@ -209,13 +211,11 @@ function formatBytes(b) {
 function onSingleUseCaseChange() {
   const uc = document.getElementById('single-use-case').value;
   document.getElementById('single-use-case-hint').textContent = USE_CASE_HINTS[uc] || '';
-  const isQA = uc === 'Complicated Document QA';
-  document.getElementById('single-question-group').style.display = isQA ? 'block' : 'none';
+  document.getElementById('single-question-group').style.display =
+    uc === 'Complicated Document QA' ? 'block' : 'none';
 }
 
-function onSingleSrcChange() {
-  refreshSingleImageSelect();
-}
+function onSingleSrcChange() { refreshSingleImageSelect(); }
 
 function refreshSingleImageSelect() {
   const src    = document.querySelector('input[name="single-src"]:checked')?.value || 'uploads';
@@ -242,12 +242,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (sel) sel.addEventListener('change', updateSinglePreview);
   const batchUC = document.getElementById('batch-use-case');
   if (batchUC) batchUC.addEventListener('change', () => {
-    const isQA = batchUC.value === 'Complicated Document QA';
-    document.getElementById('batch-question-group').style.display = isQA ? 'block' : 'none';
+    document.getElementById('batch-question-group').style.display =
+      batchUC.value === 'Complicated Document QA' ? 'block' : 'none';
   });
 });
 
-// Build the pipeline stage indicator HTML for the result card body.
+// Pipeline stage HTML builder
 function _buildPipelineHTML(stages, activeIdx, doneSet = new Set()) {
   const checkIcon = `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"/></svg>`;
   const clockIcon = `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z"/></svg>`;
@@ -258,7 +258,7 @@ function _buildPipelineHTML(stages, activeIdx, doneSet = new Set()) {
     const status = done ? 'done' : active ? 'active' : 'pending';
     const icon   = done   ? checkIcon
                  : active ? `<span class="spinner" style="width:15px;height:15px;border-width:2px"></span>`
-                 :           clockIcon;
+                 : clockIcon;
     return `<div class="pipeline-stage ${status}">
       <div class="stage-icon">${icon}</div>
       <div class="stage-body">
@@ -273,7 +273,6 @@ function _buildPipelineHTML(stages, activeIdx, doneSet = new Set()) {
     withArrows.push(item);
     if (i < items.length - 1) withArrows.push(`<div class="pipeline-arrow">→</div>`);
   });
-
   return `<div class="pipeline-stages">${withArrows.join('')}</div>
     <p class="pipeline-note">Running in background — you can switch sections freely</p>`;
 }
@@ -292,35 +291,18 @@ async function runSingleProcess() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Processing…';
 
-  const isLocal  = (state.config.service_mode || 'cloudera') === 'local';
-  const stages   = isLocal
-    ? [{ name: 'Vision LLM', desc: state.config.local_model || 'llava:7b' }]
-    : [
-        { name: 'OCR Extraction', desc: 'NeMo Retriever-Parse' },
-        { name: 'LLM Analysis',   desc: 'Llama 3.3 70B' },
-      ];
-
-  // Show stage 0 as active immediately
+  const model  = state.config.local_model || 'llava';
+  const stages = [{ name: 'Vision LLM', desc: model }];
   body.innerHTML = _buildPipelineHTML(stages, 0);
   setActive('processing', true);
 
-  // For multi-stage, simulate advancement after a few seconds
-  let stageTimer = null;
-  if (stages.length > 1) {
-    stageTimer = setTimeout(() => {
-      body.innerHTML = _buildPipelineHTML(stages, 1, new Set([0]));
-    }, 4500);
-  }
-
   try {
     const result = await api('POST', '/api/process', { filename, use_case: uc, question, source: src });
-    clearTimeout(stageTimer);
     renderSingleResult(result);
     document.getElementById('single-copy-btn').style.display = 'inline-flex';
     document.getElementById('single-copy-btn').dataset.text = result.result;
     toast('Analysis complete', 'success');
   } catch (e) {
-    clearTimeout(stageTimer);
     body.innerHTML = `<div class="empty-state"><p style="color:var(--red)">Error: ${escHtml(e.message)}</p></div>`;
     toast(e.message, 'error');
   } finally {
@@ -332,40 +314,26 @@ async function runSingleProcess() {
 
 function renderSingleResult(result) {
   const body = document.getElementById('single-result-body');
-  let html = '';
-
-  if (result.ocr_text) {
-    html += `<details style="margin-bottom:12px">
-      <summary class="result-section-label" style="cursor:pointer;user-select:none">📝 OCR Extracted Text (Stage 1)</summary>
-      <pre class="result-pre" style="margin-top:6px">${escHtml(result.ocr_text)}</pre>
-    </details>`;
-  }
-  html += `<div class="result-section-label">🤖 LLM Analysis</div>`;
-  html += `<pre class="result-pre">${escHtml(result.result)}</pre>`;
-  body.innerHTML = html;
+  body.innerHTML = `
+    <div class="result-section-label">Analysis Result</div>
+    <pre class="result-pre">${escHtml(result.result)}</pre>`;
 }
 
 function copyResult() {
-  const btn  = document.getElementById('single-copy-btn');
-  const text = btn.dataset.text || '';
+  const text = document.getElementById('single-copy-btn').dataset.text || '';
   navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard', 'success'));
 }
 
 // ---------------------------------------------------------------------------
-// Batch — file upload
+// File upload (XHR with % progress)
 // ---------------------------------------------------------------------------
 
-/**
- * Upload files via XHR so we can show real % progress.
- * progressId: prefix for the progress elements in HTML (e.g. 'batch' or 'images')
- */
 function uploadFiles(files, progressId = 'batch') {
   if (!files.length) return;
 
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
 
-  // Show progress UI
   const wrap  = document.getElementById(`${progressId}-upload-progress`);
   const fill  = document.getElementById(`${progressId}-upload-fill`);
   const pct   = document.getElementById(`${progressId}-upload-pct`);
@@ -379,19 +347,16 @@ function uploadFiles(files, progressId = 'batch') {
   setActive('uploads', true);
 
   const xhr = new XMLHttpRequest();
-
   xhr.upload.addEventListener('progress', (e) => {
     if (e.lengthComputable) {
       const p = Math.round(e.loaded / e.total * 100);
-      if (fill)  fill.style.width  = p + '%';
-      if (pct)   pct.textContent   = p + '%';
+      if (fill) fill.style.width = p + '%';
+      if (pct)  pct.textContent  = p + '%';
     }
   });
-
   xhr.addEventListener('load', async () => {
     setActive('uploads', false);
     if (wrap) wrap.style.display = 'none';
-
     if (xhr.status < 400) {
       await refreshImages();
       refreshBatchGrid();
@@ -401,39 +366,22 @@ function uploadFiles(files, progressId = 'batch') {
       toast('Upload failed', 'error');
     }
   });
-
   xhr.addEventListener('error', () => {
     setActive('uploads', false);
     if (wrap) wrap.style.display = 'none';
     toast('Upload failed (network error)', 'error');
   });
-
   xhr.open('POST', '/api/images/upload');
   xhr.send(fd);
 }
 
-function onBatchDrop(e) {
-  e.preventDefault();
-  uploadFiles([...e.dataTransfer.files], 'batch');
-}
-
-function onBatchFileInput(e) {
-  uploadFiles([...e.target.files], 'batch');
-  e.target.value = '';
-}
-
-function onImagesDrop(e) {
-  e.preventDefault();
-  uploadFiles([...e.dataTransfer.files], 'images');
-}
-
-function onImagesFileInput(e) {
-  uploadFiles([...e.target.files], 'images');
-  e.target.value = '';
-}
+function onBatchDrop(e)      { e.preventDefault(); uploadFiles([...e.dataTransfer.files], 'batch'); }
+function onBatchFileInput(e) { uploadFiles([...e.target.files], 'batch');  e.target.value = ''; }
+function onImagesDrop(e)     { e.preventDefault(); uploadFiles([...e.dataTransfer.files], 'images'); }
+function onImagesFileInput(e){ uploadFiles([...e.target.files], 'images'); e.target.value = ''; }
 
 // ---------------------------------------------------------------------------
-// Batch — image grid
+// Batch image grid
 // ---------------------------------------------------------------------------
 
 function refreshBatchGrid() {
@@ -456,26 +404,15 @@ function refreshBatchGrid() {
 }
 
 function toggleBatchSelect(name) {
-  if (state.batchSelected.has(name)) {
-    state.batchSelected.delete(name);
-  } else {
-    state.batchSelected.add(name);
-  }
+  state.batchSelected.has(name) ? state.batchSelected.delete(name) : state.batchSelected.add(name);
   refreshBatchGrid();
 }
 
-function selectAllBatch() {
-  state.uploads.forEach(i => state.batchSelected.add(i.name));
-  refreshBatchGrid();
-}
-
-function clearBatchSelection() {
-  state.batchSelected.clear();
-  refreshBatchGrid();
-}
+function selectAllBatch()    { state.uploads.forEach(i => state.batchSelected.add(i.name)); refreshBatchGrid(); }
+function clearBatchSelection(){ state.batchSelected.clear(); refreshBatchGrid(); }
 
 function updateBatchCount() {
-  const n = state.batchSelected.size;
+  const n     = state.batchSelected.size;
   document.getElementById('batch-selected-count').textContent = n;
   document.getElementById('batch-process-btn').disabled = n === 0;
   const badge = document.getElementById('nav-badge-batch');
@@ -491,16 +428,16 @@ async function runBatch() {
   const filenames = [...state.batchSelected];
   if (!filenames.length) { toast('Select at least one image.', 'error'); return; }
 
-  const uc       = document.getElementById('batch-use-case').value;
-  const question = document.getElementById('batch-question')?.value || '';
-
   try {
-    await api('POST', '/api/batch', { filenames, use_case: uc, question });
+    await api('POST', '/api/batch', {
+      filenames,
+      use_case: document.getElementById('batch-use-case').value,
+      question: document.getElementById('batch-question')?.value || '',
+    });
     state.batchSelected.clear();
     refreshBatchGrid();
     toast(`${filenames.length} job(s) queued`, 'success');
     refreshJobList();
-    // Show badge on results nav
     updateResultsBadge();
   } catch (e) {
     toast('Batch error: ' + e.message, 'error');
@@ -508,31 +445,28 @@ async function runBatch() {
 }
 
 // ---------------------------------------------------------------------------
-// Job polling
+// Job polling (always-on)
 // ---------------------------------------------------------------------------
 
-// Track which job IDs we've already notified about so we can toast
-// on completion even when the user is not on the batch/results section.
 let _notifiedJobIds = new Set();
 
 async function pollJobs() {
   try {
-    const data   = await api('GET', '/api/jobs');
+    const data    = await api('GET', '/api/jobs');
     const newJobs = data.jobs || [];
 
-    // Detect newly completed jobs → show toast regardless of active section
+    // Toast on newly completed jobs regardless of current section
     const nowComplete = new Set(newJobs.filter(j => j.status === 'complete').map(j => j.id));
     if (_notifiedJobIds.size > 0) {
       for (const id of nowComplete) {
         if (!_notifiedJobIds.has(id)) {
           const job = newJobs.find(j => j.id === id);
-          if (job) toast(`✓ ${job.filename} — analysis complete`, 'success', 4000);
+          if (job) toast(`✓ ${job.filename} — complete`, 'success', 4000);
         }
       }
     }
     _notifiedJobIds = nowComplete;
 
-    // Track active batch work for the global rail
     const running = newJobs.filter(j => j.status === 'processing' || j.status === 'queued').length;
     setActive('batch', running);
 
@@ -551,7 +485,7 @@ function updateResultsBadge() {
 }
 
 // ---------------------------------------------------------------------------
-// Job list (batch tab)
+// Job list
 // ---------------------------------------------------------------------------
 
 function statusIcon(status) {
@@ -566,9 +500,8 @@ function statusIcon(status) {
 
 function relTime(iso) {
   if (!iso) return '';
-  const diff = Date.now() - new Date(iso + 'Z').getTime();
-  const s = Math.floor(diff / 1000);
-  if (s < 60)  return `${s}s ago`;
+  const s = Math.floor((Date.now() - new Date(iso + 'Z').getTime()) / 1000);
+  if (s < 60)   return `${s}s ago`;
   if (s < 3600) return `${Math.floor(s/60)}m ago`;
   return `${Math.floor(s/3600)}h ago`;
 }
@@ -630,12 +563,9 @@ function refreshResultsList() {
       <div class="result-card-body">
         ${job.status === 'error'
           ? `<p style="color:var(--red);font-size:13px">${escHtml(job.error||'')}</p>`
-          : `
-            ${job.ocr_text ? `<div class="result-section-label">OCR Extracted Text</div><pre class="result-pre">${escHtml(job.ocr_text)}</pre>` : ''}
-            <div class="result-section-label">LLM Analysis</div>
-            <pre class="result-pre">${escHtml(job.result||'')}</pre>
-            <button class="btn btn-sm btn-ghost" onclick="navigator.clipboard.writeText(${JSON.stringify(job.result||'')}).then(()=>toast('Copied','success'))">Copy Result</button>
-          `
+          : `<div class="result-section-label">Analysis Result</div>
+             <pre class="result-pre">${escHtml(job.result||'')}</pre>
+             <button class="btn btn-sm btn-ghost" onclick="navigator.clipboard.writeText(${JSON.stringify(job.result||'')}).then(()=>toast('Copied','success'))">Copy Result</button>`
         }
       </div>
     </div>
@@ -654,7 +584,7 @@ function openResultModal(jobId) {
   const job = state.jobs.find(j => j.id === jobId);
   if (!job) return;
 
-  document.getElementById('modal-title').textContent = job.filename;
+  document.getElementById('modal-title').textContent    = job.filename;
   document.getElementById('modal-subtitle').textContent = `${job.use_case} · ${relTime(job.completed_at)}`;
 
   const imgEl = document.getElementById('modal-image');
@@ -662,27 +592,18 @@ function openResultModal(jobId) {
   imgEl.onerror = () => { imgEl.style.display = 'none'; };
   imgEl.style.display = 'block';
 
-  const ocrSection = document.getElementById('modal-ocr-section');
-  if (job.ocr_text) {
-    ocrSection.style.display = 'block';
-    document.getElementById('modal-ocr').textContent = job.ocr_text;
-  } else {
-    ocrSection.style.display = 'none';
-  }
-
   document.getElementById('modal-result').textContent = job.result || '';
   document.getElementById('result-modal').classList.add('open');
 }
 
 function closeModal(e) {
-  if (e.target.id === 'result-modal') {
+  if (e.target.id === 'result-modal')
     document.getElementById('result-modal').classList.remove('open');
-  }
 }
 
 function copyModalResult() {
-  const text = document.getElementById('modal-result').textContent;
-  navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard', 'success'));
+  navigator.clipboard.writeText(document.getElementById('modal-result').textContent)
+    .then(() => toast('Copied to clipboard', 'success'));
 }
 
 // ---------------------------------------------------------------------------
@@ -709,8 +630,8 @@ async function refreshImagesList() {
 }
 
 function previewImage(src) {
-  const area = document.getElementById('images-preview-area');
-  area.innerHTML = `<img src="${src}" style="max-width:100%;max-height:400px;object-fit:contain;display:block;border-radius:var(--radius);border:1px solid var(--border)" />`;
+  document.getElementById('images-preview-area').innerHTML =
+    `<img src="${src}" style="max-width:100%;max-height:400px;object-fit:contain;display:block;border-radius:var(--radius);border:1px solid var(--border)" />`;
 }
 
 async function deleteImage(name) {
@@ -728,172 +649,49 @@ async function deleteImage(name) {
 }
 
 // ---------------------------------------------------------------------------
-// Global Ollama background poller
-// Runs at all times when local mode is active (not just in config section).
-// Keeps _ops.pull in sync so the global rail / chip stay accurate.
-// ---------------------------------------------------------------------------
-
-let _globalOllamaTimer = null;
-
-function _startGlobalOllama() {
-  if (_globalOllamaTimer) return;
-  _globalOllamaTimer = setInterval(_globalOllamaCheck, 5000);
-}
-
-function _stopGlobalOllama() {
-  clearInterval(_globalOllamaTimer);
-  _globalOllamaTimer = null;
-  setActive('pull', false);
-}
-
-async function _globalOllamaCheck() {
-  if ((state.config.service_mode || 'cloudera') !== 'local') {
-    _stopGlobalOllama();
-    return;
-  }
-  try {
-    const data = await api('GET', '/api/ollama/status');
-    const pulling = !!(data.pull && data.pull.running);
-    setActive('pull', pulling);
-    // If config section is currently visible let its own timer handle the
-    // detailed UI update; here we just track global ops state.
-  } catch (_) {}
-}
-
-// ---------------------------------------------------------------------------
 // Configuration tab
 // ---------------------------------------------------------------------------
-
-let _currentMode = 'cloudera';
-let _ollamaStatusTimer = null;
-
-function setMode(mode) {
-  _currentMode = mode;
-  document.getElementById('mode-btn-cloudera').classList.toggle('active', mode === 'cloudera');
-  document.getElementById('mode-btn-local').classList.toggle('active', mode === 'local');
-  document.getElementById('cfg-cloudera-section').style.display = mode === 'cloudera' ? 'block' : 'none';
-  document.getElementById('cfg-local-section').style.display   = mode === 'local'    ? 'block' : 'none';
-  if (mode === 'local') {
-    // Config-section detailed poller (fast when pulling)
-    refreshOllamaStatus();
-    if (!_ollamaStatusTimer) _ollamaStatusTimer = setInterval(refreshOllamaStatus, 4000);
-    // Ensure global background poller is also running
-    _startGlobalOllama();
-  } else {
-    clearInterval(_ollamaStatusTimer);
-    _ollamaStatusTimer = null;
-    _stopGlobalOllama();
-  }
-}
 
 async function loadConfigForm() {
   try {
     state.config = await api('GET', '/api/config');
-    document.getElementById('cfg-ocr-url').value = state.config.ocr_endpoint_url || '';
-    document.getElementById('cfg-llm-url').value = state.config.llm_endpoint_url || '';
-    document.getElementById('cfg-token').placeholder = state.config.has_token
-      ? '● Saved — paste new token to update' : 'Paste your CDP JWT token';
 
-    // Populate local model dropdown from catalog
-    const catalog = state.config.local_model_catalog || {};
+    // Populate model dropdown
+    const catalog  = state.config.local_model_catalog || {};
     const modelSel = document.getElementById('cfg-local-model');
     modelSel.innerHTML = Object.entries(catalog).map(([label, id]) =>
       `<option value="${escAttr(id)}" ${id === state.config.local_model ? 'selected' : ''}>${escHtml(label)}</option>`
     ).join('');
 
-    // Restore mode
-    _currentMode = state.config.service_mode || 'cloudera';
-    setMode(_currentMode);
-
-    updateStatusChips();
-    updateConfigDot();
+    updateSidebarPills();
+    refreshOllamaStatus();
+    if (!_ollamaStatusTimer) _ollamaStatusTimer = setInterval(refreshOllamaStatus, 4000);
   } catch (e) {
     toast('Failed to load config', 'error');
   }
 }
 
-async function saveConfig() {
-  const token      = document.getElementById('cfg-token').value.trim();
-  const ocrUrl     = document.getElementById('cfg-ocr-url').value.trim();
-  const llmUrl     = document.getElementById('cfg-llm-url').value.trim();
-  const localModel = document.getElementById('cfg-local-model')?.value || 'llava:7b';
+// Config-section detailed Ollama timer (runs only while config is open)
+let _ollamaStatusTimer = null;
 
+// Override navigate to stop the config-section timer when leaving
+const _origNavigate = navigate;
+// (navigate is already defined above; we patch it after DOMContentLoaded)
+
+async function saveConfig() {
+  const model = document.getElementById('cfg-local-model')?.value || 'llava:7b';
   try {
-    await api('POST', '/api/config', {
-      inference_token: token,
-      ocr_endpoint_url: ocrUrl,
-      llm_endpoint_url: llmUrl,
-      max_tokens: 4096,
-      service_mode: _currentMode,
-      local_model: localModel,
-    });
+    await api('POST', '/api/config', { local_model: model, max_tokens: 4096 });
     state.config = await api('GET', '/api/config');
-    updateStatusChips();
-    updateConfigDot();
-    updateModeIndicator();
-    // Sync global Ollama polling with the new mode
-    if (state.config.service_mode === 'local') { _startGlobalOllama(); }
-    else { _stopGlobalOllama(); }
+    updateSidebarPills();
     toast('Configuration saved', 'success');
-    document.getElementById('cfg-token').value = '';
-    document.getElementById('cfg-token').placeholder = state.config.has_token
-      ? '● Saved — paste new token to update' : 'Paste your CDP JWT token';
   } catch (e) {
     toast('Save failed: ' + e.message, 'error');
   }
 }
 
-function updateModeIndicator() {
-  // Reflect service mode in sidebar model pills
-  const mode = state.config.service_mode || 'cloudera';
-  const pills = document.querySelector('.model-pills');
-  if (!pills) return;
-  if (mode === 'local') {
-    const model = state.config.local_model || 'llava:7b';
-    pills.innerHTML = `<span class="model-pill">Local: ${escHtml(model)}</span><span class="model-pill" style="color:var(--cldr-teal)">● Ollama</span>`;
-  } else {
-    pills.innerHTML = `<span class="model-pill">NeMo Retriever-Parse</span><span class="model-pill">Llama 3.3 70B</span>`;
-  }
-}
-
-async function testConnection(service) {
-  const token  = document.getElementById('cfg-token').value.trim();
-  const ocrUrl = document.getElementById('cfg-ocr-url').value.trim();
-  const llmUrl = document.getElementById('cfg-llm-url').value.trim();
-
-  const btn    = document.getElementById(`test-${service}-btn`);
-  const status = document.getElementById(`conn-status-${service}`);
-
-  btn.disabled = true;
-  btn.textContent = '…';
-  status.textContent = '';
-  status.className = 'conn-status';
-
-  try {
-    const result = await api('POST', '/api/test-connection', {
-      service,
-      inference_token: token || undefined,
-      ocr_endpoint_url: ocrUrl,
-      llm_endpoint_url: llmUrl,
-    });
-    if (result.ok) {
-      status.textContent = '✓ Connected';
-      status.className = 'conn-status ok';
-    } else {
-      status.textContent = '✗ ' + result.message.slice(0, 60);
-      status.className = 'conn-status error';
-    }
-  } catch (e) {
-    status.textContent = '✗ ' + e.message.slice(0, 60);
-    status.className = 'conn-status error';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Test';
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Ollama management
+// Ollama management (config section detail view)
 // ---------------------------------------------------------------------------
 
 let _wasPulling = false;
@@ -902,13 +700,11 @@ async function refreshOllamaStatus() {
   try {
     const data = await api('GET', '/api/ollama/status');
 
-    // Installed dot
     setDot('ollama-dot-installed', data.installed ? 'ok' : 'error');
     document.getElementById('ollama-label-installed').textContent =
       data.installed ? 'Ollama installed' : 'Ollama not installed';
     document.getElementById('ollama-install-hint').style.display = data.installed ? 'none' : 'block';
 
-    // Running dot
     setDot('ollama-dot-running', data.running ? 'ok' : 'error');
     document.getElementById('ollama-label-running').textContent =
       data.running ? 'Server running' : 'Server not running';
@@ -916,56 +712,50 @@ async function refreshOllamaStatus() {
       data.installed && !data.running ? 'inline-flex' : 'none';
 
     // Pull progress
-    const pull = data.pull || {};
-    const pullSection = document.getElementById('pull-progress');
-    const pullFill    = document.getElementById('pull-fill');
-    const pullLabel   = document.getElementById('pull-label');
-    const pullBtn     = document.getElementById('pull-model-btn');
+    const pull       = data.pull || {};
+    const pullSec    = document.getElementById('pull-progress');
+    const pullFill   = document.getElementById('pull-fill');
+    const pullLabel  = document.getElementById('pull-label');
+    const pullBtn    = document.getElementById('pull-model-btn');
+
+    setActive('pull', pull.running);
 
     if (pull.running) {
-      setActive('pull', true);
-      pullSection.style.display = 'block';
+      pullSec.style.display = 'block';
       pullFill.classList.add('indeterminate');
-      pullLabel.textContent = `Pulling ${pull.model} — this may take several minutes for large models…`;
+      pullLabel.textContent = `Pulling ${pull.model} — this may take several minutes…`;
       if (pullBtn) pullBtn.disabled = true;
       _wasPulling = true;
-      // Speed up polling while actively pulling
-      if (_ollamaStatusTimer) { clearInterval(_ollamaStatusTimer); _ollamaStatusTimer = null; }
-      if (!_ollamaStatusTimer) _ollamaStatusTimer = setInterval(refreshOllamaStatus, 1500);
+      clearInterval(_ollamaStatusTimer);
+      _ollamaStatusTimer = setInterval(refreshOllamaStatus, 1500);
     } else if (pull.error) {
-      setActive('pull', false);
-      pullSection.style.display = 'block';
+      pullSec.style.display = 'block';
       pullFill.classList.remove('indeterminate');
       pullFill.style.width = '0';
       pullLabel.style.color = 'var(--red)';
       pullLabel.textContent = `Error: ${pull.error}`;
       if (pullBtn) pullBtn.disabled = false;
       _wasPulling = false;
-      // Back to normal poll speed
       clearInterval(_ollamaStatusTimer);
       _ollamaStatusTimer = setInterval(refreshOllamaStatus, 4000);
     } else {
-      setActive('pull', false);
       if (_wasPulling) {
-        // Just finished — brief "Done" state
-        pullSection.style.display = 'block';
+        pullSec.style.display = 'block';
         pullFill.classList.remove('indeterminate');
         pullFill.style.width = '100%';
         pullLabel.style.color = 'var(--green)';
-        pullLabel.textContent = `✓ Model pulled successfully`;
-        setTimeout(() => { pullSection.style.display = 'none'; pullFill.style.width = '0'; pullLabel.style.color = ''; }, 4000);
-        toast(`Model pulled successfully`, 'success');
+        pullLabel.textContent = '✓ Model pulled successfully';
+        setTimeout(() => { pullSec.style.display = 'none'; pullFill.style.width = '0'; pullLabel.style.color = ''; }, 4000);
+        toast('Model pulled successfully', 'success');
       } else {
-        pullSection.style.display = 'none';
+        pullSec.style.display = 'none';
       }
       if (pullBtn) pullBtn.disabled = false;
       _wasPulling = false;
-      // Back to normal poll speed
       clearInterval(_ollamaStatusTimer);
       _ollamaStatusTimer = setInterval(refreshOllamaStatus, 4000);
     }
 
-    // Pulled models list
     renderPulledModels(data.models || []);
 
     // Model availability badge
@@ -984,7 +774,6 @@ async function refreshOllamaStatus() {
       badge.textContent = '';
       badge.className = 'model-avail-badge';
     }
-
   } catch (e) {
     console.warn('Ollama status error', e);
   }
@@ -1002,8 +791,7 @@ function renderPulledModels(models) {
 
 async function startOllama() {
   const btn = document.getElementById('ollama-start-btn');
-  btn.disabled = true;
-  btn.textContent = 'Starting…';
+  btn.disabled = true; btn.textContent = 'Starting…';
   try {
     const r = await api('POST', '/api/ollama/start');
     toast(r.message, 'success');
@@ -1011,8 +799,7 @@ async function startOllama() {
   } catch (e) {
     toast(e.message, 'error');
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Start Ollama';
+    btn.disabled = false; btn.textContent = 'Start Ollama';
   }
 }
 
@@ -1020,14 +807,12 @@ async function pullModel() {
   const model = document.getElementById('cfg-local-model')?.value;
   if (!model) { toast('Select a model first.', 'error'); return; }
 
-  const btn       = document.getElementById('pull-model-btn');
-  const pullSec   = document.getElementById('pull-progress');
-  const pullFill  = document.getElementById('pull-fill');
-  const pullLabel = document.getElementById('pull-label');
+  const btn      = document.getElementById('pull-model-btn');
+  const pullSec  = document.getElementById('pull-progress');
+  const pullFill = document.getElementById('pull-fill');
+  const pullLabel= document.getElementById('pull-label');
 
   btn.disabled = true;
-
-  // Show immediate UI feedback before the first poll cycle
   pullSec.style.display = 'block';
   pullFill.classList.add('indeterminate');
   pullLabel.style.color = '';
@@ -1045,7 +830,6 @@ async function pullModel() {
       return;
     }
     toast(`Pulling ${model} — see progress below`, 'success');
-    // Fast-poll immediately
     clearInterval(_ollamaStatusTimer);
     _ollamaStatusTimer = setInterval(refreshOllamaStatus, 1500);
   } catch (e) {
@@ -1056,6 +840,19 @@ async function pullModel() {
     _wasPulling = false;
   }
 }
+
+// Stop config-section timer when navigating away
+document.addEventListener('DOMContentLoaded', () => {
+  // Patch navigate to manage the config-section timer
+  const _origNav = navigate;
+  window.navigate = function(section) {
+    if (section !== 'config') {
+      clearInterval(_ollamaStatusTimer);
+      _ollamaStatusTimer = null;
+    }
+    _origNav(section);
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Utilities

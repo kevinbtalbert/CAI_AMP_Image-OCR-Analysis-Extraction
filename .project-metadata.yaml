@@ -1,57 +1,28 @@
-name: Image OCR & Analysis with Cloudera AI Inference
+name: Cloudera Image Analysis
 description: >
-  Transcription and information extraction from images using NVIDIA NIM models
-  hosted on Cloudera's AI Inference Service, or locally via Ollama (Llama 3.2
-  Vision). Combines NeMo Retriever-Parse for OCR with Llama 3.3 70B for
-  intelligent document analysis — with no dependency on external cloud APIs.
+  Extract, transcribe, and analyze content from images using local vision AI
+  powered by Ollama. Supports typed text, handwritten text, forms, document Q&A,
+  and structured JSON extraction — all running locally with no external API
+  dependencies. Includes batch processing and a built-in job queue.
 author: Cloudera, Inc.
 specification_version: 1.0
 prototype_version: 1.0
-date: "2025-03-01"
+date: "2026-03-19"
 
 environment_variables:
-  CAI_INFERENCE_TOKEN:
-    default: ""
-    description: >
-      CDP JWT token for Cloudera AI Inference endpoints.
-      Can also be set in the app's Configuration tab.
-    required: false
-
-  CAI_OCR_ENDPOINT_URL:
-    default: ""
-    description: >
-      Full URL of the NeMo Retriever-Parse endpoint.
-      Example: https://ml-xxxxx.cloudera.site/namespaces/serving-default/endpoints/nemoretriever-parse/v1
-    required: false
-
-  CAI_LLM_ENDPOINT_URL:
-    default: ""
-    description: >
-      Full URL of the Llama 3.3 70B endpoint on Cloudera AI Inference.
-      Example: https://ml-xxxxx.cloudera.site/namespaces/serving-default/endpoints/llama-3-3-70b/v1
-    required: false
-
-  SERVICE_MODE:
-    default: "cloudera"
-    description: >
-      Set to "local" to use Ollama with a local vision model instead of
-      Cloudera AI Inference. When "local", the setup_models job installs
-      Ollama and pulls the model automatically.
-    required: false
-
   LOCAL_MODEL:
     default: "llama3.2-vision:11b"
     description: >
-      Ollama model to use in local mode. Must be a vision-capable model.
-      Default: llama3.2-vision:11b (~7.9 GB, requires ~8 GB RAM).
+      Ollama vision model to use for image analysis.
+      Default: llama3.2-vision:11b (~7.9 GB, recommended for 4 CPU / 16 GB RAM).
       Lighter option: llava:7b (~4.7 GB).
     required: false
 
   SKIP_OLLAMA:
     default: "0"
     description: >
-      Set to "1" to skip the Ollama install + model pull step (e.g. if you
-      are using Cloudera AI Inference mode and don't need local models).
+      Set to "1" to skip the Ollama install and model pull step.
+      Useful if Ollama is already installed and the model is already pulled.
     required: false
 
 runtimes:

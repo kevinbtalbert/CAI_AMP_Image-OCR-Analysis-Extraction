@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Image Analysis | Cloudera Image Analysis</title>
+  <title>Cloudera Image Analysis</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -15,21 +15,13 @@
     <div class="sidebar-brand">
       <!-- Logo: photo frame + magnifying glass -->
       <svg class="brand-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <!-- Photo frame outline -->
         <rect x="1.5" y="2.5" width="20" height="16" rx="2.5" fill="#0F1E2D" stroke="#1FD597" stroke-width="1.5"/>
-        <!-- Scene inside photo -->
         <rect x="3" y="4" width="17" height="13" rx="1.5" fill="#152030"/>
-        <!-- Mountains -->
         <path d="M3 15.5 L7.5 10 L10.5 13 L14 8.5 L20 15.5 Z" fill="#1FD597" fill-opacity="0.35"/>
-        <!-- Sun -->
         <circle cx="6.5" cy="7.5" r="1.8" fill="#1FD597" fill-opacity="0.65"/>
-        <!-- Magnifying glass background circle (overlap) -->
         <circle cx="23" cy="23" r="7.5" fill="#1C2B3A"/>
-        <!-- Magnifying glass ring -->
         <circle cx="22.5" cy="22.5" r="4.5" stroke="#1FD597" stroke-width="2"/>
-        <!-- Handle -->
         <line x1="25.7" y1="25.7" x2="29.2" y2="29.2" stroke="#1FD597" stroke-width="2.5" stroke-linecap="round"/>
-        <!-- Small photo inside lens -->
         <path d="M20 23.5 L21.5 21.5 L23 23 L24 22 L25.5 23.5 Z" fill="#1FD597" fill-opacity="0.5"/>
       </svg>
       <div class="brand-text">
@@ -70,9 +62,9 @@
     </nav>
 
     <div class="sidebar-footer">
-      <div class="model-pills">
-        <span class="model-pill">NeMo Retriever-Parse</span>
-        <span class="model-pill">Llama 3.3 70B</span>
+      <div class="model-pills" id="sidebar-model-pills">
+        <span class="model-pill" id="sidebar-model-name">llama3.2-vision:11b</span>
+        <span class="model-pill" id="sidebar-ollama-status">● Ollama</span>
       </div>
     </div>
   </aside>
@@ -80,7 +72,7 @@
   <!-- ── Main ────────────────────────────────────────────────────────── -->
   <div class="main-wrapper">
 
-    <!-- Global progress rail — visible whenever any background op is running -->
+    <!-- Global progress rail -->
     <div id="global-rail" class="global-rail"></div>
 
     <!-- Top header -->
@@ -94,13 +86,10 @@
           <span class="spinner" style="width:12px;height:12px;border-width:1.5px;color:var(--cldr-blue)"></span>
           <span id="active-ops-text">Processing…</span>
         </div>
-        <div class="status-chip" id="status-ocr" title="NeMo Retriever-Parse endpoint">
-          <span class="status-dot" id="dot-ocr"></span>
-          <span>OCR</span>
-        </div>
-        <div class="status-chip" id="status-llm" title="Llama 3.3 70B endpoint">
-          <span class="status-dot" id="dot-llm"></span>
-          <span>LLM</span>
+        <!-- Ollama status chip -->
+        <div class="status-chip" id="ollama-status-chip" title="Ollama server">
+          <span class="status-dot" id="dot-ollama"></span>
+          <span id="ollama-chip-label">Ollama</span>
         </div>
       </div>
     </header>
@@ -112,7 +101,6 @@
       <section id="section-analysis" class="section active">
         <div class="section-grid two-col">
 
-          <!-- Controls card -->
           <div class="card">
             <div class="card-header">
               <h2 class="card-title">Settings</h2>
@@ -164,7 +152,6 @@
             </div>
           </div>
 
-          <!-- Result card -->
           <div class="card">
             <div class="card-header">
               <h2 class="card-title">Result</h2>
@@ -215,7 +202,6 @@
           </div>
         </div>
 
-        <!-- Upload + Image grid -->
         <div class="card" style="margin-bottom:16px">
           <div class="card-header">
             <h2 class="card-title">Select Images</h2>
@@ -234,21 +220,16 @@
               <span class="upload-hint">PNG, JPG, JPEG, GIF, WEBP</span>
             </div>
             <input type="file" id="batch-file-input" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="onBatchFileInput(event)" />
-            <!-- Upload progress (shown during XHR upload) -->
             <div class="upload-progress-wrap" id="batch-upload-progress" style="display:none">
               <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px;color:var(--cldr-blue);flex-shrink:0"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
               <span class="upload-progress-label" id="batch-upload-label">Uploading…</span>
               <div class="upload-progress-bar"><div class="upload-progress-fill" id="batch-upload-fill" style="width:0%"></div></div>
               <span class="upload-progress-pct" id="batch-upload-pct">0%</span>
             </div>
-
-            <div class="image-grid" id="batch-image-grid">
-              <!-- populated by JS -->
-            </div>
+            <div class="image-grid" id="batch-image-grid"></div>
           </div>
         </div>
 
-        <!-- Job Queue -->
         <div class="card">
           <div class="card-header">
             <h2 class="card-title">Job Queue</h2>
@@ -291,7 +272,6 @@
               <p>Drop images here or <strong>click to upload</strong></p>
             </div>
             <input type="file" id="images-file-input" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="onImagesFileInput(event)" />
-            <!-- Upload progress -->
             <div class="upload-progress-wrap" id="images-upload-progress" style="display:none">
               <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px;color:var(--cldr-blue);flex-shrink:0"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
               <span class="upload-progress-label" id="images-upload-label">Uploading…</span>
@@ -318,145 +298,60 @@
       <!-- ── Configuration ────────────────────────────────────────── -->
       <section id="section-config" class="section">
 
-        <!-- Mode toggle -->
+        <!-- Ollama Status -->
         <div class="card" style="margin-bottom:16px">
-          <div class="card-header"><h2 class="card-title">Service Mode</h2></div>
+          <div class="card-header">
+            <h2 class="card-title">Ollama Status</h2>
+            <button class="btn btn-sm btn-ghost" onclick="refreshOllamaStatus()">↻ Refresh</button>
+          </div>
           <div class="card-body">
-            <div class="mode-toggle">
-              <button class="mode-btn active" id="mode-btn-cloudera" onclick="setMode('cloudera')">
-                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.868 2.884c-.321-.772-1.415-.772-1.736 0l-1.83 4.401-4.753.381c-.833.067-1.171 1.107-.536 1.651l3.62 3.102-1.106 4.637c-.194.813.691 1.456 1.405 1.02L10 15.591l4.069 2.485c.713.436 1.598-.207 1.404-1.02l-1.106-4.637 3.62-3.102c.635-.544.297-1.584-.536-1.65l-4.752-.382-1.831-4.401z"/></svg>
-                Cloudera AI Inference
-                <span class="mode-desc">NeMo Retriever-Parse + Llama 3.3 70B</span>
+            <div class="ollama-status-row">
+              <div class="ollama-status-item">
+                <span class="status-dot" id="ollama-dot-installed"></span>
+                <span id="ollama-label-installed">Checking…</span>
+              </div>
+              <div class="ollama-status-item">
+                <span class="status-dot" id="ollama-dot-running"></span>
+                <span id="ollama-label-running">Checking…</span>
+              </div>
+              <button class="btn btn-ghost btn-sm" id="ollama-start-btn" onclick="startOllama()" style="display:none">Start Ollama</button>
+            </div>
+            <div id="ollama-install-hint" style="display:none;margin-top:12px">
+              <div class="info-banner">
+                Ollama is not installed. Run the <strong>Setup Local Models</strong> job in CML to install it automatically, or visit <a href="https://ollama.com/download" target="_blank" style="color:var(--cldr-blue)">ollama.com/download</a>.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Model Selection -->
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header"><h2 class="card-title">Model Selection</h2></div>
+          <div class="card-body">
+            <p class="form-hint" style="margin-bottom:16px">
+              All models below are <strong>vision-capable</strong> — they process images directly with no separate OCR step.
+              Recommended for 4 CPU / 16 GB RAM: <strong>Llama 3.2 Vision 11B</strong>.
+            </p>
+            <div class="form-group">
+              <label class="form-label">Active Model</label>
+              <select id="cfg-local-model" class="form-select"></select>
+            </div>
+            <div class="local-model-row">
+              <div id="local-model-status" class="model-avail-badge"></div>
+              <button class="btn btn-ghost" id="pull-model-btn" onclick="pullModel()">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+                Pull Model
               </button>
-              <button class="mode-btn" id="mode-btn-local" onclick="setMode('local')">
-                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 001.1 1.677A.75.75 0 0113.26 18H6.74a.75.75 0 01-.484-1.323A3.501 3.501 0 007.355 15H4.25A2.25 2.25 0 012 12.75v-8.5z"/></svg>
-                Local (Ollama)
-                <span class="mode-desc">Vision LLM — runs on this machine</span>
-              </button>
             </div>
+            <div id="pull-progress" style="display:none;margin-top:12px">
+              <div class="pull-progress-bar"><div class="pull-progress-fill" id="pull-fill"></div></div>
+              <p class="form-hint" style="margin-top:6px" id="pull-label">Pulling…</p>
+            </div>
+            <div id="pulled-models-list" style="margin-top:16px"></div>
           </div>
         </div>
 
-        <!-- Cloudera section -->
-        <div id="cfg-cloudera-section">
-          <div class="section-grid two-col" style="margin-bottom:16px">
-            <div class="card">
-              <div class="card-header"><h2 class="card-title">Models in Use</h2></div>
-              <div class="card-body">
-                <div class="model-info-row">
-                  <div class="model-info-icon ocr">OCR</div>
-                  <div>
-                    <div class="model-info-name">NeMo Retriever-Parse</div>
-                    <div class="model-info-desc">NVIDIA NIM — purpose-built for document text extraction from images</div>
-                  </div>
-                </div>
-                <div class="model-info-row">
-                  <div class="model-info-icon llm">LLM</div>
-                  <div>
-                    <div class="model-info-name">Llama 3.3 70B Instruct</div>
-                    <div class="model-info-desc">meta/llama-3.3-70b-instruct — strongest general-purpose model in the catalog</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="card">
-              <div class="card-header"><h2 class="card-title">Environment Variables</h2></div>
-              <div class="card-body">
-                <p class="form-hint" style="margin-bottom:12px">Alternatively, pre-configure via CML project environment variables:</p>
-                <table class="env-table">
-                  <tr><td><code>CAI_INFERENCE_TOKEN</code></td><td>CDP JWT token</td></tr>
-                  <tr><td><code>CAI_OCR_ENDPOINT_URL</code></td><td>NeMo Retriever-Parse URL</td></tr>
-                  <tr><td><code>CAI_LLM_ENDPOINT_URL</code></td><td>Llama 3.3 70B URL</td></tr>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-bottom:16px">
-            <div class="card-header"><h2 class="card-title">Endpoint Configuration</h2></div>
-            <div class="card-body">
-              <p class="form-hint" style="margin-bottom:20px">
-                URL format: <code>https://ml-&lt;id&gt;.&lt;env&gt;.cloudera.site/namespaces/serving-default/endpoints/&lt;name&gt;/v1</code>
-              </p>
-              <div class="form-group">
-                <label class="form-label">CDP / AI Inference Token</label>
-                <input type="password" id="cfg-token" class="form-input" placeholder="Paste your CDP JWT token" />
-              </div>
-              <div class="config-endpoint-row">
-                <div class="form-group" style="flex:1">
-                  <label class="form-label">NeMo Retriever-Parse Endpoint URL</label>
-                  <input type="text" id="cfg-ocr-url" class="form-input" placeholder="https://ml-xxxxx…/nemoretriever-parse/v1" />
-                </div>
-                <button class="btn btn-ghost" onclick="testConnection('ocr')" id="test-ocr-btn">Test</button>
-                <span class="conn-status" id="conn-status-ocr"></span>
-              </div>
-              <div class="config-endpoint-row">
-                <div class="form-group" style="flex:1">
-                  <label class="form-label">Llama 3.3 70B Endpoint URL</label>
-                  <input type="text" id="cfg-llm-url" class="form-input" placeholder="https://ml-xxxxx…/llama-3-3-70b/v1" />
-                </div>
-                <button class="btn btn-ghost" onclick="testConnection('llm')" id="test-llm-btn">Test</button>
-                <span class="conn-status" id="conn-status-llm"></span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Local / Ollama section -->
-        <div id="cfg-local-section" style="display:none">
-          <div class="card" style="margin-bottom:16px">
-            <div class="card-header">
-              <h2 class="card-title">Ollama Status</h2>
-              <button class="btn btn-sm btn-ghost" onclick="refreshOllamaStatus()">↻ Refresh</button>
-            </div>
-            <div class="card-body">
-              <div class="ollama-status-row">
-                <div class="ollama-status-item">
-                  <span class="status-dot" id="ollama-dot-installed"></span>
-                  <span id="ollama-label-installed">Checking…</span>
-                </div>
-                <div class="ollama-status-item">
-                  <span class="status-dot" id="ollama-dot-running"></span>
-                  <span id="ollama-label-running">Checking…</span>
-                </div>
-                <button class="btn btn-ghost btn-sm" id="ollama-start-btn" onclick="startOllama()" style="display:none">Start Ollama</button>
-              </div>
-              <div id="ollama-install-hint" style="display:none;margin-top:12px">
-                <div class="info-banner">
-                  Ollama is not installed. Download it from <a href="https://ollama.com/download" target="_blank" style="color:var(--cldr-blue)">ollama.com/download</a>, then restart this app.
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-bottom:16px">
-            <div class="card-header"><h2 class="card-title">Model Selection</h2></div>
-            <div class="card-body">
-              <p class="form-hint" style="margin-bottom:16px">
-                All models below are <strong>vision-capable</strong> — they process images directly with no separate OCR step.
-                Recommended for 4 CPU / 16 GB RAM: <strong>LLaVA 7B</strong>.
-              </p>
-              <div class="form-group">
-                <label class="form-label">Local Model</label>
-                <select id="cfg-local-model" class="form-select"></select>
-              </div>
-              <div class="local-model-row">
-                <div id="local-model-status" class="model-avail-badge"></div>
-                <button class="btn btn-ghost" id="pull-model-btn" onclick="pullModel()">
-                  <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
-                  Pull Model
-                </button>
-              </div>
-              <div id="pull-progress" style="display:none;margin-top:12px">
-                <div class="pull-progress-bar"><div class="pull-progress-fill" id="pull-fill"></div></div>
-                <p class="form-hint" style="margin-top:6px" id="pull-label">Pulling…</p>
-              </div>
-              <div id="pulled-models-list" style="margin-top:16px"></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Save (always visible) -->
+        <!-- Save -->
         <div class="card">
           <div class="card-body" style="padding:16px 20px">
             <div class="form-actions">
@@ -488,11 +383,7 @@
     </div>
     <div class="modal-body">
       <img id="modal-image" src="" alt="" class="modal-image" />
-      <div id="modal-ocr-section" style="display:none">
-        <div class="result-section-label">OCR Extracted Text</div>
-        <pre class="result-pre" id="modal-ocr"></pre>
-      </div>
-      <div class="result-section-label" id="modal-result-label">Analysis Result</div>
+      <div class="result-section-label">Analysis Result</div>
       <pre class="result-pre" id="modal-result"></pre>
     </div>
     <div class="modal-footer">
