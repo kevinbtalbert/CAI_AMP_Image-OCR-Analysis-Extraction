@@ -86,6 +86,11 @@
           <span class="spinner" style="width:12px;height:12px;border-width:1.5px;color:var(--cldr-blue)"></span>
           <span id="active-ops-text">Processing…</span>
         </div>
+        <!-- GPU indicator -->
+        <div class="status-chip" id="gpu-chip" title="GPU" style="display:none">
+          <span class="status-dot" id="dot-gpu"></span>
+          <span id="gpu-chip-label">GPU</span>
+        </div>
         <!-- Ollama status chip -->
         <div class="status-chip" id="ollama-status-chip" title="Ollama server">
           <span class="status-dot" id="dot-ollama"></span>
@@ -320,6 +325,15 @@
               <div class="info-banner">
                 Ollama is not installed. Run the <strong>Setup Local Models</strong> job in CML to install it automatically, or visit <a href="https://ollama.com/download" target="_blank" style="color:var(--cldr-blue)">ollama.com/download</a>.
               </div>
+            </div>
+
+            <!-- GPU status -->
+            <div class="gpu-status-section" id="gpu-status-section" style="display:none">
+              <div class="gpu-status-header">
+                <span class="result-section-label" style="margin-bottom:0">GPU</span>
+                <span class="gpu-in-use-badge" id="gpu-in-use-badge" style="display:none"></span>
+              </div>
+              <div id="gpu-cards" class="gpu-cards"></div>
             </div>
           </div>
         </div>

@@ -150,25 +150,47 @@ async function _globalOllamaCheck() {
 
     setActive('pull', pulling);
 
-    // Update header chip
+    // ── Ollama header chip ─────────────────────────────────────────────
     setDot('dot-ollama', running ? 'ok' : 'error');
     const lbl = document.getElementById('ollama-chip-label');
     if (lbl) lbl.textContent = running
       ? `Ollama · ${state.config.local_model || ''}`
       : 'Ollama offline';
 
-    // Update sidebar pills
+    // ── GPU header chip ────────────────────────────────────────────────
+    const gpuChip = document.getElementById('gpu-chip');
+    const gpuDot  = document.getElementById('dot-gpu');
+    const gpuLbl  = document.getElementById('gpu-chip-label');
+    const gpu     = data.gpu || {};
+
+    if (gpu.available && gpu.gpus && gpu.gpus.length > 0) {
+      const g = gpu.gpus[0];
+      if (gpuChip) gpuChip.style.display = 'flex';
+      setDot('dot-gpu', data.gpu_in_use ? 'ok' : 'error');
+      if (gpuLbl) {
+        const vramPct = Math.round(g.memory_used_mb / g.memory_total_mb * 100);
+        gpuLbl.textContent = data.gpu_in_use
+          ? `GPU · ${vramPct}% VRAM`
+          : `GPU · idle`;
+        const chip = document.getElementById('gpu-chip');
+        if (chip) chip.title = `${g.name} — ${g.memory_used_mb} / ${g.memory_total_mb} MB · ${g.utilization_pct}% util`;
+      }
+    } else {
+      if (gpuChip) gpuChip.style.display = 'none';
+    }
+
+    // ── Sidebar pills ──────────────────────────────────────────────────
     const statusPill = document.getElementById('sidebar-ollama-status');
     if (statusPill) {
       statusPill.style.color = running ? 'var(--cldr-teal)' : 'var(--red)';
-      statusPill.textContent = running ? '● Ollama' : '○ Ollama';
+      statusPill.textContent = running
+        ? (data.gpu_in_use ? '● Ollama · GPU' : '● Ollama · CPU')
+        : '○ Ollama';
     }
 
-    // Update config-dot warning if Ollama is not running
+    // ── Config-dot nav warning ─────────────────────────────────────────
     const configDot = document.getElementById('config-dot');
-    if (configDot) {
-      configDot.className = `nav-dot ${running ? 'success' : 'warning'}`;
-    }
+    if (configDot) configDot.className = `nav-dot ${running ? 'success' : 'warning'}`;
   } catch (_) {}
 }
 
@@ -757,6 +779,7 @@ async function refreshOllamaStatus() {
     }
 
     renderPulledModels(data.models || []);
+    renderGpuStatus(data);
 
     // Model availability badge
     const localModel = document.getElementById('cfg-local-model')?.value || '';
@@ -776,6 +799,67 @@ async function refreshOllamaStatus() {
     }
   } catch (e) {
     console.warn('Ollama status error', e);
+  }
+}
+
+function renderGpuStatus(data) {
+  const section = document.getElementById('gpu-status-section');
+  const badge   = document.getElementById('gpu-in-use-badge');
+  const cards   = document.getElementById('gpu-cards');
+  if (!section) return;
+
+  const gpu = data.gpu || {};
+
+  if (!gpu.available || !gpu.gpus || gpu.gpus.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = 'block';
+
+  // "GPU active" / "GPU idle" badge
+  if (badge) {
+    badge.style.display = 'inline-block';
+    if (data.gpu_in_use) {
+      badge.textContent = '● GPU active';
+      badge.className = 'gpu-in-use-badge active';
+    } else {
+      badge.textContent = '○ GPU idle';
+      badge.className = 'gpu-in-use-badge inactive';
+    }
+  }
+
+  // One card per GPU (most setups have 1)
+  if (cards) {
+    const loaded = data.loaded || [];
+    cards.innerHTML = gpu.gpus.map((g, i) => {
+      const vramPct    = Math.round(g.memory_used_mb / g.memory_total_mb * 100);
+      const activeClass = data.gpu_in_use ? 'active' : '';
+
+      // Find if any model is loaded on this GPU and show its VRAM allocation
+      const modelVram = loaded
+        .filter(m => m.size_vram > 0)
+        .map(m => `${escHtml(m.name)} (${(m.size_vram / 1073741824).toFixed(1)} GB)`)
+        .join(', ');
+
+      return `<div class="gpu-card ${activeClass}">
+        <div class="gpu-card-icon">GPU${i}</div>
+        <div class="gpu-card-body">
+          <div class="gpu-card-name">${escHtml(g.name)}</div>
+          <div class="gpu-card-meta">
+            Driver ${escHtml(g.driver_version)} ·
+            ${g.utilization_pct}% util
+            ${modelVram ? `· <strong style="color:var(--tx-2)">${modelVram} in VRAM</strong>` : ''}
+          </div>
+        </div>
+        <div class="gpu-vram-bar-wrap">
+          <div class="gpu-vram-bar">
+            <div class="gpu-vram-fill" style="width:${vramPct}%"></div>
+          </div>
+          <span class="gpu-vram-label">${g.memory_used_mb.toLocaleString()} / ${g.memory_total_mb.toLocaleString()} MB</span>
+        </div>
+      </div>`;
+    }).join('');
   }
 }
 

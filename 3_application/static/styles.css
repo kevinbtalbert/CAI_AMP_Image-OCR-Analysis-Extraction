@@ -620,6 +620,59 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; backgrou
   font-size: 12.5px; color: #2C5282; line-height: 1.5;
 }
 
+/* ── GPU status ───────────────────────────────────────────────────────── */
+.gpu-status-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-light);
+}
+.gpu-status-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.gpu-in-use-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+.gpu-in-use-badge.active  { background: #E6FBF5; color: #065F46; }
+.gpu-in-use-badge.inactive { background: #FFFBEB; color: #92400E; }
+
+.gpu-cards { display: flex; flex-direction: column; gap: 8px; }
+.gpu-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.gpu-card-icon {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: #EBF4FF;
+  color: var(--cldr-blue);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  font-size: 9px; font-weight: 800; letter-spacing: 0.5px;
+}
+.gpu-card.active .gpu-card-icon { background: #E6FBF5; color: #065F46; }
+.gpu-card-body { flex: 1; min-width: 0; }
+.gpu-card-name { font-size: 13px; font-weight: 600; color: var(--tx); }
+.gpu-card-meta { font-size: 11px; color: var(--tx-3); margin-top: 2px; }
+.gpu-vram-bar-wrap { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.gpu-vram-bar {
+  width: 80px; height: 5px;
+  background: var(--border);
+  border-radius: 99px; overflow: hidden;
+}
+.gpu-vram-fill { height: 100%; background: var(--cldr-teal); border-radius: 99px; transition: width 1s; }
+.gpu-vram-label { font-size: 10px; color: var(--tx-3); }
+
 /* ── Global progress rail ─────────────────────────────────────────────── */
 /* 3 px teal bar at the very top of main content — visible during any op  */
 .global-rail {

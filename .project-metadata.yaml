@@ -47,6 +47,7 @@ tasks:
     script: 2_setup_models/setup_models.py
     cpu: 4
     memory: 16
+    gpu: 1
 
   - type: run_job
     entity_label: setup_models
@@ -57,3 +58,4 @@ tasks:
     script: 3_application/start-app.py
     cpu: 4
     memory: 16
+    gpu: 1

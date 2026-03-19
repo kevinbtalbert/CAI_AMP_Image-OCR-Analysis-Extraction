@@ -116,6 +116,42 @@ def ollama_running() -> bool:
         return False
 
 
+def _ollama_env() -> dict:
+    """
+    Build the environment for the Ollama subprocess.
+
+    Key things this does:
+    - Preserves CML's CUDA_VISIBLE_DEVICES so Ollama sees the allocated GPU(s).
+    - Appends common CUDA library paths to LD_LIBRARY_PATH so the CUDA runtime
+      is discoverable on CML nodes where it may not already be on the path.
+    - Sets OLLAMA_NUM_GPU to the number of allocated GPUs (Ollama defaults to
+      auto-detect, but being explicit avoids edge-case fallback to CPU-only).
+    """
+    env = os.environ.copy()
+
+    # Supplement LD_LIBRARY_PATH with common CUDA locations
+    cuda_lib_dirs = [
+        "/usr/local/cuda/lib64",
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/local/lib",
+    ]
+    existing = env.get("LD_LIBRARY_PATH", "")
+    additions = ":".join(d for d in cuda_lib_dirs if d not in existing)
+    env["LD_LIBRARY_PATH"] = f"{additions}:{existing}" if existing else additions
+
+    # Count allocated GPUs from CML's CUDA_VISIBLE_DEVICES and tell Ollama
+    cvd = env.get("CUDA_VISIBLE_DEVICES", "")
+    if cvd and cvd.lower() not in ("", "nodevfiles", "-1"):
+        n_gpu = len([d for d in cvd.split(",") if d.strip()])
+        env.setdefault("OLLAMA_NUM_GPU", str(n_gpu))
+        print(f"[ollama] GPU(s) allocated: {cvd} — setting OLLAMA_NUM_GPU={n_gpu}")
+    else:
+        # No explicit allocation; Ollama will auto-detect
+        print("[ollama] CUDA_VISIBLE_DEVICES not set — Ollama will auto-detect GPU")
+
+    return env
+
+
 def ollama_start() -> None:
     if not ollama_installed():
         return
@@ -124,6 +160,7 @@ def ollama_start() -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
+        env=_ollama_env(),
     )
 
 
@@ -134,6 +171,55 @@ def ollama_list_models() -> list[str]:
         return [m["name"] for m in r.json().get("models", [])]
     except Exception:
         return []
+
+
+def ollama_ps() -> list[dict]:
+    """
+    Return currently loaded Ollama models via /api/ps.
+    Each entry includes 'size_vram' (bytes on GPU) so we can confirm GPU use.
+    Available in Ollama v0.1.33+.
+    """
+    try:
+        r = requests.get(f"{OLLAMA_BASE_URL}/api/ps", timeout=5)
+        if r.status_code == 200:
+            return r.json().get("models", [])
+    except Exception:
+        pass
+    return []
+
+
+def get_gpu_info() -> dict:
+    """
+    Query nvidia-smi for GPU hardware info and utilization.
+    Returns a dict with 'available' (bool) and a 'gpus' list.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.used,utilization.gpu,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            gpus = []
+            for line in result.stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 5:
+                    gpus.append({
+                        "name":            parts[0],
+                        "memory_total_mb": int(parts[1]),
+                        "memory_used_mb":  int(parts[2]),
+                        "utilization_pct": int(parts[3]),
+                        "driver_version":  parts[4],
+                    })
+            return {"available": True, "gpus": gpus}
+    except FileNotFoundError:
+        pass        # nvidia-smi not present — no GPU
+    except Exception:
+        pass
+    return {"available": False, "gpus": []}
 
 
 # Pull state — one pull at a time
@@ -470,17 +556,35 @@ def clear_jobs():
 
 @app.get("/api/ollama/status")
 def get_ollama_status():
-    installed = ollama_installed()
-    running   = ollama_running() if installed else False
-    models    = ollama_list_models() if running else []
+    installed   = ollama_installed()
+    running     = ollama_running() if installed else False
+    models      = ollama_list_models() if running else []
+    loaded      = ollama_ps() if running else []   # models currently in memory
+    gpu         = get_gpu_info()
+
+    # Determine whether Ollama is actively using GPU:
+    #   - GPU hardware is present AND
+    #   - CUDA_VISIBLE_DEVICES is set (CML allocated a GPU to this session) AND
+    #   - at least one loaded model has VRAM > 0, OR no models are loaded yet
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    gpu_allocated = gpu["available"] and bool(cvd) and cvd.lower() not in ("-1", "nodevfiles")
+    gpu_in_use    = gpu_allocated and (
+        not loaded or any(m.get("size_vram", 0) > 0 for m in loaded)
+    )
+
     with _pull_lock:
         pull = dict(_pull_state)
+
     return {
-        "installed": installed,
-        "running":   running,
-        "models":    models,
-        "pull":      pull,
-        "catalog":   LOCAL_MODEL_CATALOG,
+        "installed":    installed,
+        "running":      running,
+        "models":       models,
+        "loaded":       loaded,
+        "pull":         pull,
+        "catalog":      LOCAL_MODEL_CATALOG,
+        "gpu":          gpu,
+        "gpu_allocated": gpu_allocated,
+        "gpu_in_use":   gpu_in_use,
     }
 
 
