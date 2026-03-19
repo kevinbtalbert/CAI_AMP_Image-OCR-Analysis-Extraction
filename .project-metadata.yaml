@@ -1,0 +1,62 @@
+name: Image OCR & Analysis with Cloudera AI Inference
+description: >
+  Transcription and information extraction from images using NVIDIA NIM models
+  hosted on Cloudera's AI Inference Service. Combines NeMo Retriever-Parse for
+  OCR/text extraction with large language models (Llama 3.3 70B, etc.) for
+  intelligent document analysis — with no dependency on external cloud APIs.
+author: Cloudera, Inc.
+specification_version: 1.0
+prototype_version: 1.0
+date: "2025-03-01"
+
+environment_variables:
+  CAI_INFERENCE_TOKEN:
+    default: ""
+    description: >
+      CDP JWT token used to authenticate against all Cloudera AI Inference
+      endpoints. Can also be configured through the application's Configuration tab.
+    required: false
+
+  CAI_OCR_ENDPOINT_URL:
+    default: ""
+    description: >
+      Full URL of the deployed NeMo Retriever-Parse (or PaddleOCR) endpoint.
+      Example: https://ml-xxxxx.cloudera.site/namespaces/serving-default/endpoints/nemoretriever-parse/v1
+    required: false
+
+  CAI_LLM_ENDPOINT_URL:
+    default: ""
+    description: >
+      Full URL of the deployed LLM endpoint on Cloudera AI Inference.
+      Example: https://ml-xxxxx.cloudera.site/namespaces/serving-default/endpoints/llama-3-3-70b/v1
+    required: false
+
+  CAI_LLM_MODEL_ID:
+    default: "meta/llama-3.3-70b-instruct"
+    description: >
+      Model identifier string for the LLM, e.g. meta/llama-3.3-70b-instruct.
+      Must match the model deployed at CAI_LLM_ENDPOINT_URL.
+    required: false
+
+runtimes:
+  - editor: JupyterLab
+    kernel: Python 3.11
+    edition: Standard
+
+tasks:
+  - type: create_job
+    name: Install Dependencies
+    entity_label: install_dependencies
+    script: 1_session-install-dependencies/install.py
+    cpu: 2
+    memory: 8
+
+  - type: run_job
+    entity_label: install_dependencies
+
+  - type: start_application
+    name: Image OCR & Analysis — Cloudera AI Inference
+    subdomain: image-ocr-analysis
+    script: 2_application/start-app.py
+    cpu: 2
+    memory: 8

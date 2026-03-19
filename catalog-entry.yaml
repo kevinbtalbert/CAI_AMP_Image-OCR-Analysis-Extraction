@@ -1,0 +1,41 @@
+name: Image OCR & Analysis with Cloudera AI Inference
+description: >
+  Transcription and information extraction from document images using NVIDIA NIM
+  models on Cloudera's AI Inference Service. A two-stage pipeline — NeMo
+  Retriever-Parse for OCR followed by Llama 3.3 70B for analysis — enables
+  typed & handwritten text transcription, form extraction, document QA, and
+  JSON conversion, entirely within your Cloudera environment.
+long_description: >
+  This Accelerator for ML Projects (AMP) replicates and extends the classic
+  image-analysis workflow but runs 100% on Cloudera AI Inference, with no
+  dependency on external cloud LLM providers. 
+
+  Key capabilities:
+  - Typed text transcription
+  - Handwritten note digitisation
+  - Structured form extraction
+  - Complex document question-answering
+  - Unstructured content → JSON conversion
+  - Custom prompt mode
+
+  Processing modes:
+  - OCR → LLM Pipeline (default): NeMo Retriever-Parse extracts text; an LLM analyses it
+  - Vision LLM: send images directly to a multimodal model
+  - OCR Only: raw text extraction without LLM post-processing
+
+  A built-in Configuration tab lets users set their Cloudera AI Inference
+  endpoints and token through the UI — no code changes required.
+
+tags:
+  - Cloudera AI Inference
+  - NVIDIA NIM
+  - OCR
+  - Image Analysis
+  - Document Extraction
+  - LLM
+  - NeMo Retriever
+  - Llama
+  - Transcription
+  - Streamlit
+
+git_url: "https://github.com/cloudera/CAI_AMP_Image-OCR-Analysis-Extraction"
