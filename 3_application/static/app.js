@@ -166,15 +166,18 @@ async function _globalOllamaCheck() {
     if (gpu.available && gpu.gpus && gpu.gpus.length > 0) {
       const g = gpu.gpus[0];
       if (gpuChip) gpuChip.style.display = 'flex';
-      setDot('dot-gpu', data.gpu_in_use ? 'ok' : 'error');
-      if (gpuLbl) {
+      if (data.gpu_in_use) {
+        // Model actively loaded in VRAM
+        setDot('dot-gpu', 'ok');
         const vramPct = Math.round(g.memory_used_mb / g.memory_total_mb * 100);
-        gpuLbl.textContent = data.gpu_in_use
-          ? `GPU · ${vramPct}% VRAM`
-          : `GPU · idle`;
-        const chip = document.getElementById('gpu-chip');
-        if (chip) chip.title = `${g.name} — ${g.memory_used_mb} / ${g.memory_total_mb} MB · ${g.utilization_pct}% util`;
+        if (gpuLbl) gpuLbl.textContent = `GPU · ${vramPct}% VRAM`;
+      } else {
+        // GPU present & allocated to this session but no model in VRAM yet
+        setDot('dot-gpu', 'warn');
+        if (gpuLbl) gpuLbl.textContent = `GPU · ready`;
       }
+      const chip = document.getElementById('gpu-chip');
+      if (chip) chip.title = `${g.name} — ${g.memory_used_mb} / ${g.memory_total_mb} MB · ${g.utilization_pct}% util`;
     } else {
       if (gpuChip) gpuChip.style.display = 'none';
     }
@@ -183,8 +186,9 @@ async function _globalOllamaCheck() {
     const statusPill = document.getElementById('sidebar-ollama-status');
     if (statusPill) {
       statusPill.style.color = running ? 'var(--cldr-teal)' : 'var(--red)';
+      const gpuAvail = gpu.available && gpu.gpus && gpu.gpus.length > 0;
       statusPill.textContent = running
-        ? (data.gpu_in_use ? '● Ollama · GPU' : '● Ollama · CPU')
+        ? (data.gpu_in_use ? '● Ollama · GPU active' : (gpuAvail ? '● Ollama · GPU ready' : '● Ollama · CPU'))
         : '○ Ollama';
     }
 
@@ -817,15 +821,15 @@ function renderGpuStatus(data) {
 
   section.style.display = 'block';
 
-  // "GPU active" / "GPU idle" badge
+  // Three-state GPU badge: active (model in VRAM) / ready (GPU present, no model) / CPU
   if (badge) {
     badge.style.display = 'inline-block';
     if (data.gpu_in_use) {
-      badge.textContent = '● GPU active';
+      badge.textContent = '● GPU active — model in VRAM';
       badge.className = 'gpu-in-use-badge active';
     } else {
-      badge.textContent = '○ GPU idle';
-      badge.className = 'gpu-in-use-badge inactive';
+      badge.textContent = '● GPU ready — will load on first inference';
+      badge.className = 'gpu-in-use-badge ready';
     }
   }
 
@@ -834,7 +838,7 @@ function renderGpuStatus(data) {
     const loaded = data.loaded || [];
     cards.innerHTML = gpu.gpus.map((g, i) => {
       const vramPct    = Math.round(g.memory_used_mb / g.memory_total_mb * 100);
-      const activeClass = data.gpu_in_use ? 'active' : '';
+      const activeClass = data.gpu_in_use ? 'active' : 'ready';
 
       // Find if any model is loaded on this GPU and show its VRAM allocation
       const modelVram = loaded
@@ -849,7 +853,9 @@ function renderGpuStatus(data) {
           <div class="gpu-card-meta">
             Driver ${escHtml(g.driver_version)} ·
             ${g.utilization_pct}% util
-            ${modelVram ? `· <strong style="color:var(--tx-2)">${modelVram} in VRAM</strong>` : ''}
+            ${modelVram
+              ? `· <strong style="color:var(--cldr-teal)">${modelVram} in VRAM</strong>`
+              : `· <span style="color:var(--tx-3);font-style:italic">Model loads into VRAM on first inference</span>`}
           </div>
         </div>
         <div class="gpu-vram-bar-wrap">

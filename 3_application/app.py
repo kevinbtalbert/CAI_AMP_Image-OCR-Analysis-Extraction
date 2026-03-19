@@ -116,20 +116,33 @@ def ollama_running() -> bool:
         return False
 
 
+def _count_nvidia_gpus() -> int:
+    """Count available NVIDIA GPUs using nvidia-smi (most reliable source)."""
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            return len([l for l in r.stdout.strip().splitlines() if l.strip()])
+    except Exception:
+        pass
+    return 0
+
+
 def _ollama_env() -> dict:
     """
     Build the environment for the Ollama subprocess.
 
-    Key things this does:
-    - Preserves CML's CUDA_VISIBLE_DEVICES so Ollama sees the allocated GPU(s).
     - Appends common CUDA library paths to LD_LIBRARY_PATH so the CUDA runtime
-      is discoverable on CML nodes where it may not already be on the path.
-    - Sets OLLAMA_NUM_GPU to the number of allocated GPUs (Ollama defaults to
-      auto-detect, but being explicit avoids edge-case fallback to CPU-only).
+      is discoverable (CML may not include these by default).
+    - Sets OLLAMA_NUM_GPU based on the actual GPU count from nvidia-smi.
+      Using nvidia-smi is more reliable than CUDA_VISIBLE_DEVICES because CML
+      does not always set that variable even when a GPU is allocated.
     """
     env = os.environ.copy()
 
-    # Supplement LD_LIBRARY_PATH with common CUDA locations
+    # Ensure CUDA runtime libraries are findable
     cuda_lib_dirs = [
         "/usr/local/cuda/lib64",
         "/usr/lib/x86_64-linux-gnu",
@@ -139,15 +152,17 @@ def _ollama_env() -> dict:
     additions = ":".join(d for d in cuda_lib_dirs if d not in existing)
     env["LD_LIBRARY_PATH"] = f"{additions}:{existing}" if existing else additions
 
-    # Count allocated GPUs from CML's CUDA_VISIBLE_DEVICES and tell Ollama
-    cvd = env.get("CUDA_VISIBLE_DEVICES", "")
-    if cvd and cvd.lower() not in ("", "nodevfiles", "-1"):
-        n_gpu = len([d for d in cvd.split(",") if d.strip()])
-        env.setdefault("OLLAMA_NUM_GPU", str(n_gpu))
-        print(f"[ollama] GPU(s) allocated: {cvd} — setting OLLAMA_NUM_GPU={n_gpu}")
+    # Tell Ollama explicitly how many GPUs to use
+    n_gpu = _count_nvidia_gpus()
+    if n_gpu > 0:
+        env["OLLAMA_NUM_GPU"] = str(n_gpu)
+        print(f"[ollama] nvidia-smi found {n_gpu} GPU(s) — setting OLLAMA_NUM_GPU={n_gpu}")
     else:
-        # No explicit allocation; Ollama will auto-detect
-        print("[ollama] CUDA_VISIBLE_DEVICES not set — Ollama will auto-detect GPU")
+        print("[ollama] No GPU detected via nvidia-smi — Ollama will run on CPU")
+
+    # Log CUDA_VISIBLE_DEVICES for debugging (informational only)
+    cvd = env.get("CUDA_VISIBLE_DEVICES", "<not set>")
+    print(f"[ollama] CUDA_VISIBLE_DEVICES={cvd}")
 
     return env
 
@@ -562,15 +577,15 @@ def get_ollama_status():
     loaded      = ollama_ps() if running else []   # models currently in memory
     gpu         = get_gpu_info()
 
-    # Determine whether Ollama is actively using GPU:
-    #   - GPU hardware is present AND
-    #   - CUDA_VISIBLE_DEVICES is set (CML allocated a GPU to this session) AND
-    #   - at least one loaded model has VRAM > 0, OR no models are loaded yet
-    cvd = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-    gpu_allocated = gpu["available"] and bool(cvd) and cvd.lower() not in ("-1", "nodevfiles")
-    gpu_in_use    = gpu_allocated and (
-        not loaded or any(m.get("size_vram", 0) > 0 for m in loaded)
-    )
+    # GPU is "allocated" if nvidia-smi reports at least one GPU.
+    # We rely on nvidia-smi rather than CUDA_VISIBLE_DEVICES because CML does
+    # not always set that variable even when a GPU has been assigned.
+    gpu_allocated = gpu["available"] and len(gpu.get("gpus", [])) > 0
+
+    # GPU is "in use" (model loaded into VRAM) when at least one model reports
+    # non-zero VRAM. When the model list is empty the GPU is idle but ready.
+    gpu_in_use = gpu_allocated and any(m.get("size_vram", 0) > 0 for m in loaded)
+    gpu_ready  = gpu_allocated and not gpu_in_use
 
     with _pull_lock:
         pull = dict(_pull_state)
@@ -585,6 +600,7 @@ def get_ollama_status():
         "gpu":          gpu,
         "gpu_allocated": gpu_allocated,
         "gpu_in_use":   gpu_in_use,
+        "gpu_ready":    gpu_ready,
     }
 
 

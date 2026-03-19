@@ -198,6 +198,7 @@ svg { flex-shrink: 0; }
   transition: background 0.3s;
 }
 .status-dot.ok    { background: var(--green); }
+.status-dot.warn  { background: #F59E0B; }
 .status-dot.error { background: var(--red);   }
 
 /* ── Content area ────────────────────────────────────────────────────── */
@@ -639,6 +640,7 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; backgrou
   border-radius: 99px;
 }
 .gpu-in-use-badge.active  { background: #E6FBF5; color: #065F46; }
+.gpu-in-use-badge.ready   { background: #EFF6FF; color: #1D4ED8; }
 .gpu-in-use-badge.inactive { background: #FFFBEB; color: #92400E; }
 
 .gpu-cards { display: flex; flex-direction: column; gap: 8px; }
@@ -661,6 +663,7 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; backgrou
   font-size: 9px; font-weight: 800; letter-spacing: 0.5px;
 }
 .gpu-card.active .gpu-card-icon { background: #E6FBF5; color: #065F46; }
+.gpu-card.ready  .gpu-card-icon { background: #EFF6FF; color: #1D4ED8; }
 .gpu-card-body { flex: 1; min-width: 0; }
 .gpu-card-name { font-size: 13px; font-weight: 600; color: var(--tx); }
 .gpu-card-meta { font-size: 11px; color: var(--tx-3); margin-top: 2px; }
