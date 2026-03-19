@@ -81,8 +81,8 @@ tasks:
     entity_label: setup_models
 
   - type: start_application
-    name: Image OCR & Analysis — Cloudera AI Inference
-    subdomain: image-ocr-analysis
-    script: 2_application/start-app.py
+    name: Cloudera Image Analysis
+    subdomain: image-analysis
+    script: 3_application/start-app.py
     cpu: 4
     memory: 16

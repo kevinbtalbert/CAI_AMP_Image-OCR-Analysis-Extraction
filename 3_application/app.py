@@ -25,7 +25,7 @@ from pydantic import BaseModel
 try:
     BASE_DIR = Path(__file__).parent
 except NameError:
-    BASE_DIR = Path(os.getcwd()) / "2_application"
+    BASE_DIR = Path(os.getcwd()) / "3_application"
 
 STATIC_DIR = BASE_DIR / "static"
 EXAMPLES_DIR = BASE_DIR.parent / "data" / "examples"

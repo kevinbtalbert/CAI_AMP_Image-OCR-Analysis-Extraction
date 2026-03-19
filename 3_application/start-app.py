@@ -9,7 +9,7 @@ try:
     app_dir = os.path.dirname(os.path.abspath(__file__))
 except NameError:
     # Fallback for interactive CML sessions / notebooks
-    app_dir = os.path.join(os.getcwd(), "2_application")
+    app_dir = os.path.join(os.getcwd(), "3_application")
 
 print(f"Starting app from: {app_dir} on port {port}")
 

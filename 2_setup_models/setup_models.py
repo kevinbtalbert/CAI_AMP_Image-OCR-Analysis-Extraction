@@ -3,8 +3,11 @@ Setup script — installs Ollama and pulls the default vision model.
 
 Run order:
   1_session-install-dependencies  →  pip install requirements
-  2_setup_models                  →  install Ollama + pull model  (this script)
-  3_application (start-app.py)   →  launch the FastAPI app
+  2_setup_models/setup_models.py  →  install Ollama + pull model  (this script)
+  3_application/start-app.py     →  launch the FastAPI app
+
+Ollama is installed to ~/.local/bin/ollama so *no superuser / root access is
+required*. The binary is downloaded directly from GitHub Releases.
 
 Environment variables (optional):
   LOCAL_MODEL   Override the model to pull  (default: llama3.2-vision:11b)
@@ -16,18 +19,31 @@ import platform
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 import urllib.request
+import urllib.error
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
 DEFAULT_MODEL = "llama3.2-vision:11b"
-OLLAMA_LINUX_INSTALL_URL = "https://ollama.com/install.sh"
 MODEL = os.environ.get("LOCAL_MODEL", DEFAULT_MODEL)
-SKIP = os.environ.get("SKIP_OLLAMA", "0").strip() == "1"
+SKIP  = os.environ.get("SKIP_OLLAMA", "0").strip() == "1"
 
+# Install Ollama here — user-writable, no root needed.
+OLLAMA_INSTALL_DIR = os.path.expanduser("~/.local/bin")
+OLLAMA_BIN         = os.path.join(OLLAMA_INSTALL_DIR, "ollama")
+
+# GitHub Releases base URL (redirects to latest)
+_GH_BASE = "https://github.com/ollama/ollama/releases/latest/download"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def banner(msg: str) -> None:
     print(f"\n{'='*60}")
@@ -35,65 +51,151 @@ def banner(msg: str) -> None:
     print(f"{'='*60}\n")
 
 
-def run(cmd: list, **kwargs) -> subprocess.CompletedProcess:
-    print(f"  $ {' '.join(cmd)}")
-    return subprocess.run(cmd, **kwargs)
+def _ensure_on_path(directory: str) -> None:
+    """Prepend *directory* to PATH for this process and child processes."""
+    current = os.environ.get("PATH", "")
+    dirs = current.split(os.pathsep)
+    if directory not in dirs:
+        os.environ["PATH"] = directory + os.pathsep + current
+        print(f"  Added {directory} to PATH")
+
+
+def _download(url: str, dest: str, *, label: str = "") -> bool:
+    """Stream-download *url* to *dest*, return True on success."""
+    try:
+        print(f"  Downloading {label or url}")
+        urllib.request.urlretrieve(url, dest)
+        return True
+    except urllib.error.HTTPError as e:
+        print(f"  HTTP {e.code}: {url}")
+        return False
+    except Exception as e:
+        print(f"  Download error: {e}")
+        return False
+
+
+def _extract_ollama_from_tgz(tgz_path: str, dest_path: str) -> bool:
+    """
+    Extract the 'ollama' binary from a .tgz archive.
+    Handles both 'ollama' and 'bin/ollama' archive layouts.
+    """
+    try:
+        with tarfile.open(tgz_path, "r:gz") as tar:
+            member = None
+            for m in tar.getmembers():
+                if m.isfile() and (m.name == "ollama" or m.name.endswith("/ollama")):
+                    member = m
+                    break
+            if member is None:
+                print("  Warning: 'ollama' binary not found in tarball")
+                return False
+            member.name = "ollama"  # flatten any sub-directory
+            tar.extract(member, os.path.dirname(dest_path))
+        return True
+    except Exception as e:
+        print(f"  tgz extraction failed: {e}")
+        return False
 
 
 # ---------------------------------------------------------------------------
-# 1. Install Ollama
+# 1. Install Ollama (no root)
 # ---------------------------------------------------------------------------
 
 def install_ollama() -> bool:
+    """
+    Install Ollama to ~/.local/bin without requiring root or sudo.
+    Downloads the pre-built binary directly from GitHub Releases.
+    """
+    # Check if already available on PATH
     if shutil.which("ollama"):
-        print("✓ Ollama already installed.")
+        print("✓ Ollama already on PATH.")
+        return True
+
+    # Check our install location directly
+    if os.path.isfile(OLLAMA_BIN) and os.access(OLLAMA_BIN, os.X_OK):
+        print(f"✓ Ollama binary found at {OLLAMA_BIN}.")
+        _ensure_on_path(OLLAMA_INSTALL_DIR)
         return True
 
     system = platform.system().lower()
-    banner(f"Installing Ollama ({system})")
+    machine = platform.machine().lower()
 
+    banner(f"Installing Ollama (no root) — {system}/{machine}")
+    os.makedirs(OLLAMA_INSTALL_DIR, exist_ok=True)
+
+    # ── Linux ─────────────────────────────────────────────────────────────
     if system == "linux":
-        # Official one-liner install script
-        print("  Downloading and running Ollama install script…")
-        result = subprocess.run(
-            "curl -fsSL https://ollama.com/install.sh | sh",
-            shell=True,
-        )
-        if result.returncode != 0:
-            print("  curl not available, trying wget…")
-            result = subprocess.run(
-                "wget -qO- https://ollama.com/install.sh | sh",
-                shell=True,
-            )
-        if result.returncode != 0:
-            print("ERROR: Could not install Ollama. Check network access.")
-            return False
-        print("✓ Ollama installed.")
-        return True
+        arch = "arm64" if machine in ("aarch64", "arm64") else "amd64"
 
+        # Strategy 1: download the tgz release
+        tgz_url = f"{_GH_BASE}/ollama-linux-{arch}.tgz"
+        with tempfile.NamedTemporaryFile(suffix=".tgz", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            if _download(tgz_url, tmp_path, label=f"ollama-linux-{arch}.tgz"):
+                if _extract_ollama_from_tgz(tmp_path, OLLAMA_BIN):
+                    os.chmod(OLLAMA_BIN, 0o755)
+                    _ensure_on_path(OLLAMA_INSTALL_DIR)
+                    print(f"✓ Ollama installed to {OLLAMA_BIN} (from tgz).")
+                    return True
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+        # Strategy 2: fall back to direct binary (older release format)
+        bin_url = f"{_GH_BASE}/ollama-linux-{arch}"
+        if _download(bin_url, OLLAMA_BIN, label=f"ollama-linux-{arch} binary"):
+            os.chmod(OLLAMA_BIN, 0o755)
+            _ensure_on_path(OLLAMA_INSTALL_DIR)
+            print(f"✓ Ollama installed to {OLLAMA_BIN} (direct binary).")
+            return True
+
+        print("ERROR: Could not download Ollama binary. Check network access.")
+        return False
+
+    # ── macOS ─────────────────────────────────────────────────────────────
     elif system == "darwin":
-        # Try Homebrew first, then direct download
+        # Try Homebrew first (doesn't need root if Homebrew itself was installed in user space)
         if shutil.which("brew"):
-            result = run(["brew", "install", "ollama"])
+            result = subprocess.run(["brew", "install", "ollama"],
+                                    capture_output=False)
             if result.returncode == 0:
                 print("✓ Ollama installed via Homebrew.")
                 return True
-        # Fallback: download the macOS binary directly
-        print("  Attempting direct binary download for macOS…")
+            print("  Homebrew install failed, falling back to binary download.")
+
+        arch = "arm64" if machine in ("arm64", "aarch64") else "amd64"
+
+        # Try tgz
+        tgz_url = f"{_GH_BASE}/ollama-darwin-{arch}.tgz"
+        with tempfile.NamedTemporaryFile(suffix=".tgz", delete=False) as tmp:
+            tmp_path = tmp.name
         try:
-            dest = "/usr/local/bin/ollama"
-            url = "https://github.com/ollama/ollama/releases/latest/download/ollama-darwin"
-            urllib.request.urlretrieve(url, dest)
-            os.chmod(dest, 0o755)
-            print("✓ Ollama binary installed to /usr/local/bin/ollama.")
+            if _download(tgz_url, tmp_path, label=f"ollama-darwin-{arch}.tgz"):
+                if _extract_ollama_from_tgz(tmp_path, OLLAMA_BIN):
+                    os.chmod(OLLAMA_BIN, 0o755)
+                    _ensure_on_path(OLLAMA_INSTALL_DIR)
+                    print(f"✓ Ollama installed to {OLLAMA_BIN}.")
+                    return True
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+        # Direct binary
+        bin_url = f"{_GH_BASE}/ollama-darwin"
+        if _download(bin_url, OLLAMA_BIN, label="ollama-darwin binary"):
+            os.chmod(OLLAMA_BIN, 0o755)
+            _ensure_on_path(OLLAMA_INSTALL_DIR)
+            print(f"✓ Ollama installed to {OLLAMA_BIN}.")
             return True
-        except Exception as e:
-            print(f"ERROR: Could not download Ollama binary: {e}")
-            print("  Please install Ollama manually: https://ollama.com/download")
-            return False
+
+        print("ERROR: Could not install Ollama on macOS. "
+              "Please install manually: https://ollama.com/download")
+        return False
 
     else:
-        print(f"ERROR: Unsupported OS '{system}'. Install Ollama manually: https://ollama.com/download")
+        print(f"ERROR: Unsupported OS '{system}'. "
+              "Install Ollama manually: https://ollama.com/download")
         return False
 
 
@@ -103,8 +205,6 @@ def install_ollama() -> bool:
 
 def ensure_ollama_running() -> bool:
     """Start the Ollama server if it isn't already responding."""
-    import urllib.error
-
     def is_up() -> bool:
         try:
             urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3)
@@ -116,9 +216,10 @@ def ensure_ollama_running() -> bool:
         print("✓ Ollama server already running.")
         return True
 
-    print("  Starting Ollama server…")
+    ollama_bin = shutil.which("ollama") or OLLAMA_BIN
+    print(f"  Starting Ollama server ({ollama_bin})…")
     subprocess.Popen(
-        ["ollama", "serve"],
+        [ollama_bin, "serve"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
@@ -142,7 +243,6 @@ def ensure_ollama_running() -> bool:
 def pull_model(model: str) -> bool:
     """Pull a model via `ollama pull`. Shows live progress."""
     import json
-    import urllib.error
 
     # Check if already pulled
     try:
@@ -157,17 +257,17 @@ def pull_model(model: str) -> bool:
         pass
 
     banner(f"Pulling model: {model}")
-    print(f"  This may take several minutes for large models.")
-    print(f"  Model storage: ~/.ollama/models/\n")
+    print("  This may take several minutes for large models.")
+    print(f"  Storage: ~/.ollama/models/\n")
 
-    # Run ollama pull — streams progress to stdout so CML logs show it
-    result = run(
-        ["ollama", "pull", model],
+    ollama_bin = shutil.which("ollama") or OLLAMA_BIN
+    result = subprocess.run(
+        [ollama_bin, "pull", model],
         stdout=sys.stdout,
         stderr=sys.stderr,
     )
     if result.returncode != 0:
-        print(f"\nERROR: `ollama pull {model}` failed with exit code {result.returncode}")
+        print(f"\nERROR: `ollama pull {model}` failed (exit {result.returncode})")
         return False
 
     print(f"\n✓ Model '{model}' pulled successfully.")
@@ -179,9 +279,10 @@ def pull_model(model: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def main():
-    banner("Cloudera AI Inference — Local Model Setup")
+    banner("Cloudera Image Analysis — Local Model Setup")
     print(f"  Target model : {MODEL}")
     print(f"  Platform     : {platform.system()} {platform.machine()}")
+    print(f"  Install dir  : {OLLAMA_INSTALL_DIR}")
 
     if SKIP:
         print("\nSKIP_OLLAMA=1 — skipping setup.")
