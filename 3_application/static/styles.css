@@ -1,45 +1,45 @@
 /* ── Design tokens ───────────────────────────────────────────────────── */
 :root {
-  --sidebar-w: 220px;
-  --header-h: 56px;
+  --sidebar-w: 224px;
+  --header-h: 52px;
 
-  /* Cloudera brand */
-  --cldr-navy:   #1C2B3A;
-  --cldr-teal:   #1FD597;
+  /* Cloudera brand — matched to Agent Studio #132329 nav + AI Workbench screenshots */
+  --cldr-navy:   #132329;
+  --cldr-teal:   #1CD799;
   --cldr-blue:   #0066CC;
   --cldr-blue-h: #0052A3;
 
-  /* Sidebar */
-  --sb-bg:        #1C2B3A;
-  --sb-border:    #243547;
-  --sb-text:      #8BA4B8;
-  --sb-text-h:    #C5D5E4;
-  --sb-active-bg: rgba(31,213,151,0.12);
-  --sb-active-tx: #1FD597;
+  /* Sidebar — Agent Studio uses bg-[#132329] */
+  --sb-bg:        #132329;
+  --sb-border:    #1E3540;
+  --sb-text:      #7A9BAD;
+  --sb-text-h:    #C0D8E8;
+  --sb-active-bg: rgba(28,215,153,0.13);
+  --sb-active-tx: #1CD799;
 
-  /* Content */
-  --bg:           #EFF3F8;
+  /* Content — Workbench uses a very light blue-gray */
+  --bg:           #F3F6FA;
   --card-bg:      #FFFFFF;
   --header-bg:    #FFFFFF;
-  --border:       #DDE3EB;
-  --border-light: #EEF2F7;
+  --border:       #E2E8F0;
+  --border-light: #EDF2F7;
 
-  /* Text */
-  --tx:           #1C2B3A;
-  --tx-2:         #4A5D70;
-  --tx-3:         #7A92A7;
+  /* Text — from Workbench dark navy foreground */
+  --tx:           #0D1F2D;
+  --tx-2:         #3D5166;
+  --tx-3:         #6B8299;
 
   /* Status */
-  --green:  #1FD597;
+  --green:  #1CD799;
   --red:    #E53E3E;
-  --amber:  #D69E2E;
+  --amber:  #F59E0B;
   --blue:   #3182CE;
 
   --radius:    6px;
   --radius-lg: 10px;
-  --shadow:    0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
-  --shadow-lg: 0 20px 40px rgba(0,0,0,0.14), 0 8px 16px rgba(0,0,0,0.08);
+  --shadow:    0 1px 2px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-lg: 0 16px 32px rgba(0,0,0,0.12), 0 6px 12px rgba(0,0,0,0.06);
 }
 
 /* ── Reset ───────────────────────────────────────────────────────────── */
@@ -85,8 +85,22 @@ svg { flex-shrink: 0; }
 }
 .brand-icon { width: 28px; height: 28px; flex-shrink: 0; }
 .brand-text { display: flex; flex-direction: column; }
-.brand-name { color: #FFFFFF; font-size: 10.5px; font-weight: 700; letter-spacing: 1.8px; }
-.brand-sub  { color: var(--cldr-teal); font-size: 10px; font-weight: 500; letter-spacing: 0.2px; margin-top: 2px; opacity: 0.9; }
+.brand-name {
+  color: #FFFFFF;
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+}
+.brand-sub {
+  color: var(--cldr-teal);
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+  margin-top: 2px;
+  opacity: 0.85;
+}
 
 .sidebar-nav {
   padding: 12px 8px;
@@ -96,13 +110,15 @@ svg { flex-shrink: 0; }
   gap: 2px;
 }
 .nav-section-label {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
-  letter-spacing: 0.9px;
+  letter-spacing: 0.7px;
   color: var(--sb-text);
-  padding: 8px 8px 4px;
-  opacity: 0.55;
+  padding: 12px 10px 3px;
+  opacity: 0.45;
   text-transform: uppercase;
+  border-top: 1px solid var(--sb-border);
+  margin-top: 4px;
 }
 .nav-item {
   display: flex;
@@ -174,7 +190,7 @@ svg { flex-shrink: 0; }
   overflow: hidden;
 }
 
-/* ── Top header ──────────────────────────────────────────────────────── */
+/* ── Top header — Workbench style: white, 1px border, very subtle shadow */
 .top-header {
   height: var(--header-h);
   background: var(--header-bg);
@@ -182,11 +198,17 @@ svg { flex-shrink: 0; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 22px;
   flex-shrink: 0;
-  box-shadow: var(--shadow);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
-.page-title { font-size: 16px; font-weight: 600; color: var(--tx); letter-spacing: -0.2px; }
+.page-title {
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--tx);
+  letter-spacing: -0.3px;
+}
 .header-right { display: flex; align-items: center; gap: 8px; }
 .status-chip {
   display: flex;
@@ -223,22 +245,28 @@ svg { flex-shrink: 0; }
 .section-grid { display: grid; gap: 16px; }
 .section-grid.two-col { grid-template-columns: 1fr 1fr; }
 
-/* ── Cards ───────────────────────────────────────────────────────────── */
+/* ── Cards — Workbench style: white, shadow-only, no hard border ──────── */
 .card {
   background: var(--card-bg);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(0,0,0,0.06);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
   overflow: hidden;
 }
 .card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  padding: 13px 20px;
   border-bottom: 1px solid var(--border-light);
 }
-.card-title { font-size: 13px; font-weight: 600; color: var(--tx); letter-spacing: -0.1px; }
+.card-title {
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--tx);
+  letter-spacing: -0.2px;
+}
 .card-actions { display: flex; gap: 8px; }
 .card-body { padding: 20px; }
 
@@ -308,7 +336,7 @@ svg { flex-shrink: 0; }
 
 /* ── Forms ───────────────────────────────────────────────────────────── */
 .form-group { margin-bottom: 16px; }
-.form-label { display: block; font-size: 11px; font-weight: 600; color: var(--tx-2); margin-bottom: 5px; letter-spacing: 0.4px; text-transform: uppercase; }
+.form-label { display: block; font-size: 11.5px; font-weight: 600; color: var(--tx-2); margin-bottom: 5px; letter-spacing: 0.1px; }
 .form-input, .form-select {
   width: 100%;
   padding: 8px 12px;
@@ -858,38 +886,59 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; backgrou
   padding-bottom: 8px;
 }
 
-/* ── User chip (header) ──────────────────────────────────────────────── */
+/* ── User chip — matches Workbench circular avatar chip ──────────────── */
 .user-chip {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 10px 4px 5px;
+  padding: 3px 10px 3px 4px;
   border-radius: 99px;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--card-bg);
   cursor: default;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.user-chip:hover { border-color: var(--cldr-blue); }
+.user-chip:hover { border-color: #aac4d4; box-shadow: 0 0 0 2px rgba(0,102,204,0.07); }
 .user-avatar {
-  width: 24px; height: 24px;
+  width: 26px; height: 26px;
   border-radius: 50%;
   background: var(--cldr-navy);
   color: var(--cldr-teal);
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
   font-size: 10px;
   font-weight: 700;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
 }
 .user-name {
   font-size: 12px;
   font-weight: 500;
   color: var(--tx-2);
-  max-width: 120px;
+  max-width: 130px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Welcome banner — matches Workbench "Welcome to..." heading ──────── */
+.welcome-banner {
+  margin-bottom: 20px;
+  padding: 18px 4px 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+.welcome-title {
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--tx);
+  letter-spacing: -0.4px;
+  margin-bottom: 4px;
+}
+.welcome-sub {
+  font-size: 13px;
+  color: var(--tx-3);
+  font-weight: 400;
 }
 
 /* ── Folder browser ──────────────────────────────────────────────────── */

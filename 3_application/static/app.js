@@ -1041,20 +1041,35 @@ document.addEventListener('DOMContentLoaded', () => {
 async function loadUserInfo() {
   try {
     const u = await api('GET', '/api/user-info');
+
+    // Header avatar chip
     const avatar = document.getElementById('user-avatar');
     const name   = document.getElementById('user-name');
     const chip   = document.getElementById('user-chip');
     if (avatar) avatar.textContent = u.initials || '?';
-    if (name)   name.textContent   = u.full_name || u.username || '';
+    if (name)   name.textContent   = u.username || u.full_name || '';
     if (chip)   chip.title = `${u.full_name || u.username}  ·  ${u.project}${u.domain ? '  ·  ' + u.domain : ''}`;
-    // Greet in the sidebar footer
+
+    // Welcome banner (Workbench-style greeting)
+    const banner    = document.getElementById('welcome-banner');
+    const welcomeTx = document.getElementById('welcome-title');
+    if (banner) banner.style.display = 'block';
+    if (welcomeTx && u.full_name) {
+      welcomeTx.textContent = `Welcome to Cloudera Image Analysis, ${u.full_name}.`;
+    }
+
+    // Sidebar footer user pill
     const pills = document.getElementById('sidebar-model-pills');
-    if (pills && u.username) {
-      const greeting = document.createElement('span');
-      greeting.className = 'model-pill';
-      greeting.style.cssText = 'color:var(--cldr-teal);border-color:rgba(31,213,151,0.25)';
-      greeting.textContent = `👤 ${u.full_name || u.username}`;
-      pills.prepend(greeting);
+    if (pills && (u.full_name || u.username)) {
+      const existing = document.getElementById('sidebar-user-pill');
+      if (!existing) {
+        const pill = document.createElement('span');
+        pill.id = 'sidebar-user-pill';
+        pill.className = 'model-pill';
+        pill.style.cssText = 'color:var(--cldr-teal);border-color:rgba(28,215,153,0.25);display:flex;align-items:center;gap:5px';
+        pill.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor" style="width:10px;height:10px"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-5.5-2.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM10 12a5.99 5.99 0 00-4.793 2.39A6.483 6.483 0 0010 16.5a6.483 6.483 0 004.793-2.11A5.99 5.99 0 0010 12z"/></svg>${escHtml(u.full_name || u.username)}`;
+        pills.prepend(pill);
+      }
     }
   } catch (_) {}
 }
