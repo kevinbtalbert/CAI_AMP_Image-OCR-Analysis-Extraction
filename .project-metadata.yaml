@@ -18,12 +18,6 @@ environment_variables:
       Lighter option: llava:7b (~4.7 GB).
     required: false
 
-  SKIP_OLLAMA:
-    default: "0"
-    description: >
-      Set to "1" to skip the Ollama install and model pull step.
-      Useful if Ollama is already installed and the model is already pulled.
-    required: false
 
 runtimes:
   - editor: JupyterLab

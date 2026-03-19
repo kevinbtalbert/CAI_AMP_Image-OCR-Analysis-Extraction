@@ -15,7 +15,6 @@ releases a new version.
 
 Environment variables (optional):
   LOCAL_MODEL   Override the model to pull  (default: llama3.2-vision:11b)
-  SKIP_OLLAMA   Set to '1' to skip this entire script
 """
 
 import json
@@ -34,9 +33,8 @@ import urllib.request
 # Config
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL      = "llama3.2-vision:11b"
-MODEL              = os.environ.get("LOCAL_MODEL", DEFAULT_MODEL)
-SKIP               = os.environ.get("SKIP_OLLAMA", "0").strip() == "1"
+DEFAULT_MODEL = "llama3.2-vision:11b"
+MODEL         = os.environ.get("LOCAL_MODEL", DEFAULT_MODEL)
 
 # User-writable install target — no root required
 OLLAMA_INSTALL_DIR = os.path.expanduser("~/.local/bin")
@@ -361,10 +359,6 @@ def main() -> None:
     print(f"  Target model : {MODEL}")
     print(f"  Platform     : {platform.system()} {platform.machine()}")
     print(f"  Install dir  : {OLLAMA_INSTALL_DIR}")
-
-    if SKIP:
-        print("\nSKIP_OLLAMA=1 — skipping setup.")
-        sys.exit(0)
 
     if not install_ollama():
         print("\nWARNING: Ollama installation failed. Local mode will not be available.")
