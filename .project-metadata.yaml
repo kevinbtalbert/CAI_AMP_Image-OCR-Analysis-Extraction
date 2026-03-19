@@ -21,7 +21,7 @@ environment_variables:
 runtimes:
   - editor: JupyterLab
     kernel: Python 3.11
-    edition: Standard
+    edition: Nvidia GPU
 
 tasks:
   - type: create_job
