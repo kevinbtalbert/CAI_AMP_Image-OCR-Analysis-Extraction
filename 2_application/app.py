@@ -47,11 +47,11 @@ OCR_MODEL_ID = "nemoretriever-parse"
 # Recommended for 4 CPU / 16 GB RAM: llava:7b (~4.7 GB Q4)
 LOCAL_MODEL_CATALOG = {
     "moondream2  (~1.7 GB · fastest)":           "moondream",
-    "LLaVA 7B  (~4.7 GB · recommended)":         "llava:7b",
-    "Llama 3.2 Vision 11B  (~7.9 GB · best)":    "llama3.2-vision:11b",
+    "Llama 3.2 Vision 11B  (~7.9 GB · default)":  "llama3.2-vision:11b",
+    "LLaVA 7B  (~4.7 GB · lighter)":             "llava:7b",
     "LLaVA 13B  (~8.0 GB · higher quality)":     "llava:13b",
 }
-LOCAL_MODEL_DEFAULT = "llava:7b"
+LOCAL_MODEL_DEFAULT = "llama3.2-vision:11b"
 OLLAMA_BASE_URL = "http://localhost:11434"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -156,18 +156,28 @@ def _do_pull(model: str) -> None:
     with _pull_lock:
         _pull_state.update({"model": model, "running": True, "error": None})
     try:
-        subprocess.run(
-            ["ollama", "pull", model],
-            check=True,
-            capture_output=True,
+        ollama_bin = shutil.which("ollama")
+        if not ollama_bin:
+            raise FileNotFoundError(
+                "Ollama binary not found. Run the '2_setup_models' setup job first, "
+                "or install Ollama manually from https://ollama.com/download"
+            )
+        # Let stdout/stderr flow to the app log; avoid buffering a multi-GB download
+        result = subprocess.run(
+            [ollama_bin, "pull", model],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=7200,   # 2-hour hard limit
         )
-    except subprocess.CalledProcessError as e:
-        with _pull_lock:
-            _pull_state.update({"running": False, "error": e.stderr.decode()[:200]})
-        return
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"ollama pull exited with code {result.returncode}. "
+                + result.stdout[-300:] if result.stdout else ""
+            )
     except Exception as e:
         with _pull_lock:
-            _pull_state.update({"running": False, "error": str(e)[:200]})
+            _pull_state.update({"running": False, "error": str(e)[:300]})
         return
     with _pull_lock:
         _pull_state.update({"running": False, "error": None})
@@ -453,6 +463,15 @@ class TestConnectionBody(BaseModel):
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Image OCR & Analysis — Cloudera AI Inference")
+
+
+@app.on_event("startup")
+def _startup():
+    """If local mode is configured and Ollama isn't running yet, start it."""
+    cfg = load_config()
+    if cfg.get("service_mode") == "local" and ollama_installed() and not ollama_running():
+        print("[startup] Local mode detected — starting Ollama server…")
+        ollama_start()
 
 # Serve static assets
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

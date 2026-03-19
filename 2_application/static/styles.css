@@ -592,8 +592,25 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; backgrou
 .model-avail-badge.ready   { background: #E6FBF5; color: #065F46; }
 .model-avail-badge.missing { background: #FFFBEB; color: #92400E; }
 
-.pull-progress-bar { height: 6px; background: var(--border); border-radius: 99px; overflow: hidden; }
-.pull-progress-fill { height: 100%; background: var(--cldr-teal); border-radius: 99px; transition: width 0.4s; width: 0; }
+.pull-progress-bar { height: 6px; background: var(--border); border-radius: 99px; overflow: hidden; position: relative; }
+.pull-progress-fill {
+  height: 100%;
+  background: var(--cldr-teal);
+  border-radius: 99px;
+  transition: width 0.4s;
+  width: 0;
+  position: absolute; left: 0; top: 0;
+}
+@keyframes progress-slide {
+  0%   { left: -40%; width: 40%; }
+  60%  { left: 60%;  width: 40%; }
+  100% { left: 100%; width: 40%; }
+}
+.pull-progress-fill.indeterminate {
+  width: 40% !important;
+  animation: progress-slide 1.4s ease-in-out infinite;
+  transition: none;
+}
 
 .pulled-model-row { display: inline-block; margin: 3px; }
 
@@ -601,4 +618,136 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; backgrou
   background: #EBF4FF; border: 1px solid #BEE3F8;
   border-radius: var(--radius); padding: 10px 14px;
   font-size: 12.5px; color: #2C5282; line-height: 1.5;
+}
+
+/* ── Global progress rail ─────────────────────────────────────────────── */
+/* 3 px teal bar at the very top of main content — visible during any op  */
+.global-rail {
+  height: 3px;
+  background: transparent;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+@keyframes rail-sweep {
+  0%   { left: -55%; width: 55%; }
+  65%  { left: 50%;  width: 55%; }
+  100% { left: 100%; width: 55%; }
+}
+.global-rail.active {
+  background: rgba(31,213,151,0.18);
+}
+.global-rail.active::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  background: var(--cldr-teal);
+  border-radius: 99px;
+  animation: rail-sweep 1.6s ease-in-out infinite;
+}
+
+/* ── Active ops chip (header) ─────────────────────────────────────────── */
+.active-ops-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 99px;
+  background: #EBF4FF;
+  border: 1px solid #BEE3F8;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cldr-blue);
+  animation: chip-in 0.2s ease;
+}
+@keyframes chip-in { from { opacity:0; transform:scale(0.9); } to { opacity:1; transform:scale(1); } }
+
+/* ── Upload progress inline ───────────────────────────────────────────── */
+.upload-progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -8px 0 16px;
+  padding: 10px 14px;
+  background: #EBF4FF;
+  border: 1px solid #BEE3F8;
+  border-radius: var(--radius);
+  animation: chip-in 0.15s ease;
+}
+.upload-progress-label { font-size: 12px; color: var(--tx-2); white-space: nowrap; }
+.upload-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(0,102,204,0.15);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.upload-progress-fill {
+  height: 100%;
+  background: var(--cldr-blue);
+  border-radius: 99px;
+  transition: width 0.15s linear;
+}
+.upload-progress-pct {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cldr-blue);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* ── Pipeline stage indicator (single-process) ────────────────────────── */
+.pipeline-stages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 28px 16px 20px;
+  flex-wrap: wrap;
+}
+.pipeline-stage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  border: 2px solid var(--border);
+  background: var(--bg);
+  min-width: 150px;
+  transition: border-color 0.3s, background 0.3s, box-shadow 0.3s, opacity 0.3s;
+}
+.pipeline-stage.active {
+  border-color: var(--cldr-blue);
+  background: #EBF4FF;
+  box-shadow: 0 0 0 3px rgba(0,102,204,0.1);
+}
+.pipeline-stage.done {
+  border-color: var(--green);
+  background: #E6FBF5;
+}
+.pipeline-stage.pending { opacity: 0.45; }
+.stage-icon {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.stage-icon svg { width: 16px; height: 16px; }
+.pipeline-stage.active .stage-icon { color: var(--cldr-blue); }
+.pipeline-stage.done   .stage-icon { color: var(--green); }
+.pipeline-stage.pending .stage-icon { color: var(--tx-3); }
+.stage-label    { font-size: 12.5px; font-weight: 600; color: var(--tx); }
+.stage-sublabel { font-size: 10.5px; color: var(--tx-3); margin-top: 1px; }
+.pipeline-arrow {
+  font-size: 18px;
+  color: var(--tx-3);
+  font-weight: 300;
+  flex-shrink: 0;
+}
+.pipeline-note {
+  text-align: center;
+  color: var(--tx-3);
+  font-size: 11.5px;
+  margin-top: 4px;
+  padding-bottom: 8px;
 }

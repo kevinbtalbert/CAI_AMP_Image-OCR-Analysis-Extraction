@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Image OCR &amp; Analysis | Cloudera AI Inference</title>
+  <title>Image Analysis | Cloudera Image Analysis</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -13,16 +13,28 @@
   <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
   <aside class="sidebar">
     <div class="sidebar-brand">
+      <!-- Logo: photo frame + magnifying glass -->
       <svg class="brand-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect width="32" height="32" rx="4" fill="#1FD597"/>
-        <rect x="6" y="6" width="8" height="8" rx="1" fill="#1C2B3A"/>
-        <rect x="18" y="6" width="8" height="8" rx="1" fill="#1C2B3A"/>
-        <rect x="6" y="18" width="8" height="8" rx="1" fill="#1C2B3A"/>
-        <rect x="18" y="18" width="8" height="8" rx="1" fill="#1C2B3A" opacity="0.5"/>
+        <!-- Photo frame outline -->
+        <rect x="1.5" y="2.5" width="20" height="16" rx="2.5" fill="#0F1E2D" stroke="#1FD597" stroke-width="1.5"/>
+        <!-- Scene inside photo -->
+        <rect x="3" y="4" width="17" height="13" rx="1.5" fill="#152030"/>
+        <!-- Mountains -->
+        <path d="M3 15.5 L7.5 10 L10.5 13 L14 8.5 L20 15.5 Z" fill="#1FD597" fill-opacity="0.35"/>
+        <!-- Sun -->
+        <circle cx="6.5" cy="7.5" r="1.8" fill="#1FD597" fill-opacity="0.65"/>
+        <!-- Magnifying glass background circle (overlap) -->
+        <circle cx="23" cy="23" r="7.5" fill="#1C2B3A"/>
+        <!-- Magnifying glass ring -->
+        <circle cx="22.5" cy="22.5" r="4.5" stroke="#1FD597" stroke-width="2"/>
+        <!-- Handle -->
+        <line x1="25.7" y1="25.7" x2="29.2" y2="29.2" stroke="#1FD597" stroke-width="2.5" stroke-linecap="round"/>
+        <!-- Small photo inside lens -->
+        <path d="M20 23.5 L21.5 21.5 L23 23 L24 22 L25.5 23.5 Z" fill="#1FD597" fill-opacity="0.5"/>
       </svg>
       <div class="brand-text">
         <span class="brand-name">CLOUDERA</span>
-        <span class="brand-sub">AI Inference</span>
+        <span class="brand-sub">Image Analysis</span>
       </div>
     </div>
 
@@ -68,12 +80,20 @@
   <!-- ── Main ────────────────────────────────────────────────────────── -->
   <div class="main-wrapper">
 
+    <!-- Global progress rail — visible whenever any background op is running -->
+    <div id="global-rail" class="global-rail"></div>
+
     <!-- Top header -->
     <header class="top-header">
       <div class="header-left">
         <h1 class="page-title" id="page-title">Image Analysis</h1>
       </div>
       <div class="header-right">
+        <!-- Active operations indicator -->
+        <div class="active-ops-chip" id="active-ops-chip" style="display:none">
+          <span class="spinner" style="width:12px;height:12px;border-width:1.5px;color:var(--cldr-blue)"></span>
+          <span id="active-ops-text">Processing…</span>
+        </div>
         <div class="status-chip" id="status-ocr" title="NeMo Retriever-Parse endpoint">
           <span class="status-dot" id="dot-ocr"></span>
           <span>OCR</span>
@@ -214,6 +234,13 @@
               <span class="upload-hint">PNG, JPG, JPEG, GIF, WEBP</span>
             </div>
             <input type="file" id="batch-file-input" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="onBatchFileInput(event)" />
+            <!-- Upload progress (shown during XHR upload) -->
+            <div class="upload-progress-wrap" id="batch-upload-progress" style="display:none">
+              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px;color:var(--cldr-blue);flex-shrink:0"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+              <span class="upload-progress-label" id="batch-upload-label">Uploading…</span>
+              <div class="upload-progress-bar"><div class="upload-progress-fill" id="batch-upload-fill" style="width:0%"></div></div>
+              <span class="upload-progress-pct" id="batch-upload-pct">0%</span>
+            </div>
 
             <div class="image-grid" id="batch-image-grid">
               <!-- populated by JS -->
@@ -264,6 +291,13 @@
               <p>Drop images here or <strong>click to upload</strong></p>
             </div>
             <input type="file" id="images-file-input" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="onImagesFileInput(event)" />
+            <!-- Upload progress -->
+            <div class="upload-progress-wrap" id="images-upload-progress" style="display:none">
+              <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px;color:var(--cldr-blue);flex-shrink:0"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+              <span class="upload-progress-label" id="images-upload-label">Uploading…</span>
+              <div class="upload-progress-bar"><div class="upload-progress-fill" id="images-upload-fill" style="width:0%"></div></div>
+              <span class="upload-progress-pct" id="images-upload-pct">0%</span>
+            </div>
           </div>
         </div>
 

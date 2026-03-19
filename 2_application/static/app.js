@@ -13,6 +13,45 @@ const state = {
   pollTimer: null,
 };
 
+// ---------------------------------------------------------------------------
+// Active-operations tracker
+// Keeps a count per category; drives the global rail and header chip.
+// ---------------------------------------------------------------------------
+
+const _ops = { uploads: 0, processing: 0, batch: 0, pull: 0 };
+
+function setActive(type, value) {
+  if (typeof value === 'boolean') {
+    _ops[type] = value ? 1 : 0;
+  } else {
+    _ops[type] = Math.max(0, value);
+  }
+  _updateGlobalProgress();
+}
+
+function _updateGlobalProgress() {
+  const total = _ops.uploads + _ops.processing + _ops.batch + _ops.pull;
+  const rail  = document.getElementById('global-rail');
+  const chip  = document.getElementById('active-ops-chip');
+  const text  = document.getElementById('active-ops-text');
+
+  if (rail) rail.classList.toggle('active', total > 0);
+
+  if (chip) {
+    if (total > 0) {
+      chip.style.display = 'flex';
+      const parts = [];
+      if (_ops.uploads > 0)    parts.push(`${_ops.uploads} upload${_ops.uploads > 1 ? 's' : ''}`);
+      if (_ops.processing > 0) parts.push('analyzing');
+      if (_ops.batch > 0)      parts.push(`${_ops.batch} job${_ops.batch > 1 ? 's' : ''}`);
+      if (_ops.pull > 0)       parts.push('pulling model');
+      if (text) text.textContent = parts.join(' · ');
+    } else {
+      chip.style.display = 'none';
+    }
+  }
+}
+
 const PAGE_TITLES = {
   analysis: 'Image Analysis',
   batch:    'Batch Process',
@@ -98,8 +137,12 @@ async function init() {
   onSingleUseCaseChange();
   refreshSingleImageSelect();
 
-  // Poll jobs every 2 s
+  // Poll jobs every 2 s (always-on, regardless of current section)
   state.pollTimer = setInterval(pollJobs, 2000);
+
+  // If local mode, start global Ollama background poller so pull progress
+  // and status are tracked even when the user is on a different section.
+  if (_currentMode === 'local') _startGlobalOllama();
 
   navigate('analysis');
 }
@@ -204,6 +247,37 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+// Build the pipeline stage indicator HTML for the result card body.
+function _buildPipelineHTML(stages, activeIdx, doneSet = new Set()) {
+  const checkIcon = `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"/></svg>`;
+  const clockIcon = `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z"/></svg>`;
+
+  const items = stages.map((s, i) => {
+    const done   = doneSet.has(i);
+    const active = i === activeIdx && !done;
+    const status = done ? 'done' : active ? 'active' : 'pending';
+    const icon   = done   ? checkIcon
+                 : active ? `<span class="spinner" style="width:15px;height:15px;border-width:2px"></span>`
+                 :           clockIcon;
+    return `<div class="pipeline-stage ${status}">
+      <div class="stage-icon">${icon}</div>
+      <div class="stage-body">
+        <div class="stage-label">${escHtml(s.name)}</div>
+        <div class="stage-sublabel">${escHtml(s.desc)}</div>
+      </div>
+    </div>`;
+  });
+
+  const withArrows = [];
+  items.forEach((item, i) => {
+    withArrows.push(item);
+    if (i < items.length - 1) withArrows.push(`<div class="pipeline-arrow">→</div>`);
+  });
+
+  return `<div class="pipeline-stages">${withArrows.join('')}</div>
+    <p class="pipeline-note">Running in background — you can switch sections freely</p>`;
+}
+
 async function runSingleProcess() {
   const uc       = document.getElementById('single-use-case').value;
   const question = document.getElementById('single-question')?.value || '';
@@ -212,22 +286,45 @@ async function runSingleProcess() {
 
   if (!filename) { toast('Please select an image.', 'error'); return; }
 
-  const btn = document.getElementById('single-process-btn');
+  const btn  = document.getElementById('single-process-btn');
   const body = document.getElementById('single-result-body');
 
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Processing…';
-  body.innerHTML = `<div class="empty-state"><span class="spinner" style="width:32px;height:32px;border-width:3px"></span><p style="margin-top:12px">Running OCR → LLM pipeline…</p></div>`;
+
+  const isLocal  = (state.config.service_mode || 'cloudera') === 'local';
+  const stages   = isLocal
+    ? [{ name: 'Vision LLM', desc: state.config.local_model || 'llava:7b' }]
+    : [
+        { name: 'OCR Extraction', desc: 'NeMo Retriever-Parse' },
+        { name: 'LLM Analysis',   desc: 'Llama 3.3 70B' },
+      ];
+
+  // Show stage 0 as active immediately
+  body.innerHTML = _buildPipelineHTML(stages, 0);
+  setActive('processing', true);
+
+  // For multi-stage, simulate advancement after a few seconds
+  let stageTimer = null;
+  if (stages.length > 1) {
+    stageTimer = setTimeout(() => {
+      body.innerHTML = _buildPipelineHTML(stages, 1, new Set([0]));
+    }, 4500);
+  }
 
   try {
     const result = await api('POST', '/api/process', { filename, use_case: uc, question, source: src });
+    clearTimeout(stageTimer);
     renderSingleResult(result);
     document.getElementById('single-copy-btn').style.display = 'inline-flex';
     document.getElementById('single-copy-btn').dataset.text = result.result;
+    toast('Analysis complete', 'success');
   } catch (e) {
+    clearTimeout(stageTimer);
     body.innerHTML = `<div class="empty-state"><p style="color:var(--red)">Error: ${escHtml(e.message)}</p></div>`;
     toast(e.message, 'error');
   } finally {
+    setActive('processing', false);
     btn.disabled = false;
     btn.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm6.39-2.908a.75.75 0 01.766.027l3.5 2.25a.75.75 0 010 1.262l-3.5 2.25A.75.75 0 018 12.25v-4.5a.75.75 0 01.39-.658z"/></svg> Process Image`;
   }
@@ -258,38 +355,80 @@ function copyResult() {
 // Batch — file upload
 // ---------------------------------------------------------------------------
 
-async function uploadFiles(files) {
+/**
+ * Upload files via XHR so we can show real % progress.
+ * progressId: prefix for the progress elements in HTML (e.g. 'batch' or 'images')
+ */
+function uploadFiles(files, progressId = 'batch') {
   if (!files.length) return;
+
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
-  try {
-    await api('POST', '/api/images/upload', fd);
-    await refreshImages();
-    refreshBatchGrid();
-    refreshImagesList();
-    toast(`Uploaded ${files.length} file(s)`, 'success');
-  } catch (e) {
-    toast('Upload failed: ' + e.message, 'error');
-  }
+
+  // Show progress UI
+  const wrap  = document.getElementById(`${progressId}-upload-progress`);
+  const fill  = document.getElementById(`${progressId}-upload-fill`);
+  const pct   = document.getElementById(`${progressId}-upload-pct`);
+  const label = document.getElementById(`${progressId}-upload-label`);
+
+  if (wrap)  wrap.style.display  = 'flex';
+  if (fill)  fill.style.width    = '0%';
+  if (pct)   pct.textContent     = '0%';
+  if (label) label.textContent   = `Uploading ${files.length} file${files.length > 1 ? 's' : ''}…`;
+
+  setActive('uploads', true);
+
+  const xhr = new XMLHttpRequest();
+
+  xhr.upload.addEventListener('progress', (e) => {
+    if (e.lengthComputable) {
+      const p = Math.round(e.loaded / e.total * 100);
+      if (fill)  fill.style.width  = p + '%';
+      if (pct)   pct.textContent   = p + '%';
+    }
+  });
+
+  xhr.addEventListener('load', async () => {
+    setActive('uploads', false);
+    if (wrap) wrap.style.display = 'none';
+
+    if (xhr.status < 400) {
+      await refreshImages();
+      refreshBatchGrid();
+      refreshImagesList();
+      toast(`Uploaded ${files.length} file(s)`, 'success');
+    } else {
+      toast('Upload failed', 'error');
+    }
+  });
+
+  xhr.addEventListener('error', () => {
+    setActive('uploads', false);
+    if (wrap) wrap.style.display = 'none';
+    toast('Upload failed (network error)', 'error');
+  });
+
+  xhr.open('POST', '/api/images/upload');
+  xhr.send(fd);
 }
 
 function onBatchDrop(e) {
   e.preventDefault();
-  uploadFiles([...e.dataTransfer.files]);
+  uploadFiles([...e.dataTransfer.files], 'batch');
 }
 
 function onBatchFileInput(e) {
-  uploadFiles([...e.target.files]);
+  uploadFiles([...e.target.files], 'batch');
   e.target.value = '';
 }
 
 function onImagesDrop(e) {
   e.preventDefault();
-  uploadFiles([...e.dataTransfer.files]);
+  uploadFiles([...e.dataTransfer.files], 'images');
 }
 
 function onImagesFileInput(e) {
-  uploadFiles([...e.target.files]);
+  uploadFiles([...e.target.files], 'images');
   e.target.value = '';
 }
 
@@ -372,10 +511,32 @@ async function runBatch() {
 // Job polling
 // ---------------------------------------------------------------------------
 
+// Track which job IDs we've already notified about so we can toast
+// on completion even when the user is not on the batch/results section.
+let _notifiedJobIds = new Set();
+
 async function pollJobs() {
   try {
-    const data = await api('GET', '/api/jobs');
-    state.jobs = data.jobs || [];
+    const data   = await api('GET', '/api/jobs');
+    const newJobs = data.jobs || [];
+
+    // Detect newly completed jobs → show toast regardless of active section
+    const nowComplete = new Set(newJobs.filter(j => j.status === 'complete').map(j => j.id));
+    if (_notifiedJobIds.size > 0) {
+      for (const id of nowComplete) {
+        if (!_notifiedJobIds.has(id)) {
+          const job = newJobs.find(j => j.id === id);
+          if (job) toast(`✓ ${job.filename} — analysis complete`, 'success', 4000);
+        }
+      }
+    }
+    _notifiedJobIds = nowComplete;
+
+    // Track active batch work for the global rail
+    const running = newJobs.filter(j => j.status === 'processing' || j.status === 'queued').length;
+    setActive('batch', running);
+
+    state.jobs = newJobs;
     refreshJobList();
     refreshResultsList();
     updateResultsBadge();
@@ -567,6 +728,39 @@ async function deleteImage(name) {
 }
 
 // ---------------------------------------------------------------------------
+// Global Ollama background poller
+// Runs at all times when local mode is active (not just in config section).
+// Keeps _ops.pull in sync so the global rail / chip stay accurate.
+// ---------------------------------------------------------------------------
+
+let _globalOllamaTimer = null;
+
+function _startGlobalOllama() {
+  if (_globalOllamaTimer) return;
+  _globalOllamaTimer = setInterval(_globalOllamaCheck, 5000);
+}
+
+function _stopGlobalOllama() {
+  clearInterval(_globalOllamaTimer);
+  _globalOllamaTimer = null;
+  setActive('pull', false);
+}
+
+async function _globalOllamaCheck() {
+  if ((state.config.service_mode || 'cloudera') !== 'local') {
+    _stopGlobalOllama();
+    return;
+  }
+  try {
+    const data = await api('GET', '/api/ollama/status');
+    const pulling = !!(data.pull && data.pull.running);
+    setActive('pull', pulling);
+    // If config section is currently visible let its own timer handle the
+    // detailed UI update; here we just track global ops state.
+  } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
 // Configuration tab
 // ---------------------------------------------------------------------------
 
@@ -580,11 +774,15 @@ function setMode(mode) {
   document.getElementById('cfg-cloudera-section').style.display = mode === 'cloudera' ? 'block' : 'none';
   document.getElementById('cfg-local-section').style.display   = mode === 'local'    ? 'block' : 'none';
   if (mode === 'local') {
+    // Config-section detailed poller (fast when pulling)
     refreshOllamaStatus();
     if (!_ollamaStatusTimer) _ollamaStatusTimer = setInterval(refreshOllamaStatus, 4000);
+    // Ensure global background poller is also running
+    _startGlobalOllama();
   } else {
     clearInterval(_ollamaStatusTimer);
     _ollamaStatusTimer = null;
+    _stopGlobalOllama();
   }
 }
 
@@ -633,6 +831,9 @@ async function saveConfig() {
     updateStatusChips();
     updateConfigDot();
     updateModeIndicator();
+    // Sync global Ollama polling with the new mode
+    if (state.config.service_mode === 'local') { _startGlobalOllama(); }
+    else { _stopGlobalOllama(); }
     toast('Configuration saved', 'success');
     document.getElementById('cfg-token').value = '';
     document.getElementById('cfg-token').placeholder = state.config.has_token
@@ -695,6 +896,8 @@ async function testConnection(service) {
 // Ollama management
 // ---------------------------------------------------------------------------
 
+let _wasPulling = false;
+
 async function refreshOllamaStatus() {
   try {
     const data = await api('GET', '/api/ollama/status');
@@ -715,25 +918,61 @@ async function refreshOllamaStatus() {
     // Pull progress
     const pull = data.pull || {};
     const pullSection = document.getElementById('pull-progress');
+    const pullFill    = document.getElementById('pull-fill');
+    const pullLabel   = document.getElementById('pull-label');
+    const pullBtn     = document.getElementById('pull-model-btn');
+
     if (pull.running) {
+      setActive('pull', true);
       pullSection.style.display = 'block';
-      document.getElementById('pull-label').textContent = `Pulling ${pull.model}…`;
-      // Animate the fill bar while pulling
-      document.getElementById('pull-fill').style.width = '70%';
+      pullFill.classList.add('indeterminate');
+      pullLabel.textContent = `Pulling ${pull.model} — this may take several minutes for large models…`;
+      if (pullBtn) pullBtn.disabled = true;
+      _wasPulling = true;
+      // Speed up polling while actively pulling
+      if (_ollamaStatusTimer) { clearInterval(_ollamaStatusTimer); _ollamaStatusTimer = null; }
+      if (!_ollamaStatusTimer) _ollamaStatusTimer = setInterval(refreshOllamaStatus, 1500);
     } else if (pull.error) {
+      setActive('pull', false);
       pullSection.style.display = 'block';
-      document.getElementById('pull-fill').style.width = '0';
-      document.getElementById('pull-label').textContent = `Error: ${pull.error}`;
+      pullFill.classList.remove('indeterminate');
+      pullFill.style.width = '0';
+      pullLabel.style.color = 'var(--red)';
+      pullLabel.textContent = `Error: ${pull.error}`;
+      if (pullBtn) pullBtn.disabled = false;
+      _wasPulling = false;
+      // Back to normal poll speed
+      clearInterval(_ollamaStatusTimer);
+      _ollamaStatusTimer = setInterval(refreshOllamaStatus, 4000);
     } else {
-      pullSection.style.display = 'none';
+      setActive('pull', false);
+      if (_wasPulling) {
+        // Just finished — brief "Done" state
+        pullSection.style.display = 'block';
+        pullFill.classList.remove('indeterminate');
+        pullFill.style.width = '100%';
+        pullLabel.style.color = 'var(--green)';
+        pullLabel.textContent = `✓ Model pulled successfully`;
+        setTimeout(() => { pullSection.style.display = 'none'; pullFill.style.width = '0'; pullLabel.style.color = ''; }, 4000);
+        toast(`Model pulled successfully`, 'success');
+      } else {
+        pullSection.style.display = 'none';
+      }
+      if (pullBtn) pullBtn.disabled = false;
+      _wasPulling = false;
+      // Back to normal poll speed
+      clearInterval(_ollamaStatusTimer);
+      _ollamaStatusTimer = setInterval(refreshOllamaStatus, 4000);
     }
 
     // Pulled models list
     renderPulledModels(data.models || []);
 
     // Model availability badge
-    const localModel = document.getElementById('cfg-local-model')?.value;
-    const avail = data.models.some(m => m === localModel || m.startsWith(localModel.split(':')[0]));
+    const localModel = document.getElementById('cfg-local-model')?.value || '';
+    const avail = (data.models || []).some(
+      m => m === localModel || m.startsWith(localModel.split(':')[0])
+    );
     const badge = document.getElementById('local-model-status');
     if (data.running && avail) {
       badge.textContent = '✓ Model ready';
@@ -779,19 +1018,42 @@ async function startOllama() {
 
 async function pullModel() {
   const model = document.getElementById('cfg-local-model')?.value;
-  if (!model) return;
-  const btn = document.getElementById('pull-model-btn');
+  if (!model) { toast('Select a model first.', 'error'); return; }
+
+  const btn       = document.getElementById('pull-model-btn');
+  const pullSec   = document.getElementById('pull-progress');
+  const pullFill  = document.getElementById('pull-fill');
+  const pullLabel = document.getElementById('pull-label');
+
   btn.disabled = true;
+
+  // Show immediate UI feedback before the first poll cycle
+  pullSec.style.display = 'block';
+  pullFill.classList.add('indeterminate');
+  pullLabel.style.color = '';
+  pullLabel.textContent = `Starting pull for ${model}…`;
+  _wasPulling = true;
+
   try {
     const r = await api('POST', '/api/ollama/pull', { model });
-    toast(r.message, r.ok ? 'success' : 'error');
-    document.getElementById('pull-progress').style.display = 'block';
-    document.getElementById('pull-fill').style.width = '15%';
-    document.getElementById('pull-label').textContent = `Pulling ${model}…`;
+    if (!r.ok) {
+      toast(r.message, 'error');
+      pullSec.style.display = 'none';
+      pullFill.classList.remove('indeterminate');
+      btn.disabled = false;
+      _wasPulling = false;
+      return;
+    }
+    toast(`Pulling ${model} — see progress below`, 'success');
+    // Fast-poll immediately
+    clearInterval(_ollamaStatusTimer);
+    _ollamaStatusTimer = setInterval(refreshOllamaStatus, 1500);
   } catch (e) {
-    toast(e.message, 'error');
-  } finally {
+    toast('Pull failed: ' + e.message, 'error');
+    pullSec.style.display = 'none';
+    pullFill.classList.remove('indeterminate');
     btn.disabled = false;
+    _wasPulling = false;
   }
 }
 
