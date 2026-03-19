@@ -41,15 +41,14 @@ OCR Only
 └─────────┘    └──────────────────────┘
 ```
 
-### Recommended Models (from Cloudera AI Inference Catalog)
+### Models Used
 
-| Role | Model | Notes |
+| Stage | Model | Why |
 |---|---|---|
-| OCR / Extraction | **NeMo Retriever-Parse** | Purpose-built for document images; returns semantically-labelled text blocks |
-| OCR (alternative) | **PaddleOCR** | Lightweight; optimised for dense text |
-| LLM Analysis | **Llama 3.3 70B Instruct** | Best general-purpose reasoning in the catalog |
-| Complex QA / Reasoning | **DeepSeek R1 Distill Llama 70B** | Strong logical reasoning |
-| Fast / Low-latency | **Llama 3.1 8B Instruct** | When speed matters more than depth |
+| **OCR / Text Extraction** | **NeMo Retriever-Parse** | Purpose-built for document images; extracts formatted text with semantic labels (headings, paragraphs, tables) |
+| **Analysis / Reasoning** | **Llama 3.3 70B Instruct** | The strongest general-purpose model in the Cloudera AI Inference catalog; handles all use cases accurately |
+
+Both models run entirely within your Cloudera environment — no external API calls.
 
 ---
 
@@ -69,10 +68,9 @@ You can pre-configure the application via CML environment variables, or use the 
 
 | Variable | Description |
 |---|---|
-| `CAI_INFERENCE_TOKEN` | CDP JWT token for all AI Inference endpoints |
-| `CAI_OCR_ENDPOINT_URL` | Full URL of the OCR model endpoint |
-| `CAI_LLM_ENDPOINT_URL` | Full URL of the LLM endpoint |
-| `CAI_LLM_MODEL_ID` | Model identifier, e.g. `meta/llama-3.3-70b-instruct` |
+| `CAI_INFERENCE_TOKEN` | CDP JWT token (used for both endpoints) |
+| `CAI_OCR_ENDPOINT_URL` | Full URL of the NeMo Retriever-Parse endpoint |
+| `CAI_LLM_ENDPOINT_URL` | Full URL of the Llama 3.3 70B endpoint |
 
 ### Endpoint URL format
 

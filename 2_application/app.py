@@ -15,24 +15,12 @@ DATA_DIR = Path(os.getenv("CDSW_HOME", "/home/cdsw")) / "data"
 CONFIG_PATH = Path(os.getenv("CDSW_HOME", "/home/cdsw")) / ".cai_inference_config.json"
 EXAMPLES_DIR = Path(__file__).parent.parent / "data" / "examples"
 
-# Preferred model IDs for the Cloudera AI Inference LLM catalog
-LLM_CATALOG = {
-    "Llama 3.3 70B Instruct": "meta/llama-3.3-70b-instruct",
-    "Llama 3.3 Nemotron Super 49B": "nvidia/llama-3.3-nemotron-super-49b-v1",
-    "DeepSeek R1 Distill Llama 70B": "nvidia/deepseek-r1-distill-llama-70b",
-    "Llama 3.1 70B Instruct": "meta/llama-3.1-70b-instruct",
-    "Llama 3.1 8B Instruct": "meta/llama-3.1-8b-instruct",
-    "Mistral 7B Instruct": "mistralai/mistral-7b-instruct-v0.3",
-    "Mixtral 8x7B Instruct": "mistralai/mixtral-8x7b-instruct-v0.1",
-    "Gemma 2": "google/gemma-2-27b-it",
-    "GPT-OSS 20B": "openai/gpt-oss-20b",
-    "Custom (enter below)": "__custom__",
-}
+# The two models used for all use cases
+LLM_MODEL_LABEL = "Llama 3.3 70B Instruct"
+LLM_MODEL_ID = "meta/llama-3.3-70b-instruct"
 
-OCR_MODEL_OPTIONS = {
-    "NeMo Retriever-Parse": "nemoretriever-parse",
-    "PaddleOCR": "paddleocr",
-}
+OCR_MODEL_LABEL = "NeMo Retriever-Parse"
+OCR_MODEL_ID = "nemoretriever-parse"
 
 USE_CASES = [
     "Transcribing Typed Text",
@@ -83,10 +71,8 @@ def default_config() -> dict:
         "inference_token": os.getenv("CAI_INFERENCE_TOKEN", ""),
         "ocr_endpoint_url": os.getenv("CAI_OCR_ENDPOINT_URL", ""),
         "llm_endpoint_url": os.getenv("CAI_LLM_ENDPOINT_URL", ""),
-        "llm_model_id": os.getenv("CAI_LLM_MODEL_ID", "meta/llama-3.3-70b-instruct"),
-        "llm_model_label": "Llama 3.3 70B Instruct",
-        "ocr_model": "nemoretriever-parse",
-        "ocr_model_label": "NeMo Retriever-Parse",
+        "llm_model_id": LLM_MODEL_ID,
+        "ocr_model": OCR_MODEL_ID,
         "processing_mode": "ocr_pipeline",  # "ocr_pipeline" | "vision_llm" | "ocr_only"
         "max_tokens": 4096,
     }
@@ -423,25 +409,7 @@ with tab_analysis:
         selected_use_case = st.selectbox("Use Case:", USE_CASES)
         st.caption(f"**{USE_CASE_DESCRIPTIONS[selected_use_case]}**")
 
-        # Processing mode
-        mode_labels = {
-            "ocr_pipeline": "OCR → LLM Pipeline  (NeMo Retriever-Parse + LLM)",
-            "vision_llm": "Vision LLM  (multimodal, image sent directly)",
-            "ocr_only": "OCR Only  (no LLM, returns raw extracted text)",
-        }
-        mode_key = cfg.get("processing_mode", "ocr_pipeline")
-        processing_mode = st.selectbox(
-            "Processing Mode:",
-            options=list(mode_labels.keys()),
-            format_func=lambda k: mode_labels[k],
-            index=list(mode_labels.keys()).index(mode_key),
-            help=(
-                "**OCR → LLM Pipeline**: Extract text via NeMo Retriever-Parse (or PaddleOCR), "
-                "then pass it to an LLM for analysis.\n\n"
-                "**Vision LLM**: Send the image directly to a multimodal LLM.\n\n"
-                "**OCR Only**: Return raw extracted text without LLM post-processing."
-            ),
-        )
+        processing_mode = "ocr_pipeline"
 
         # Build the instruction
         if selected_use_case == "User Defined":
@@ -591,7 +559,7 @@ with tab_config:
 
     st.markdown(
         """
-        Configure your **Cloudera AI Inference Service** endpoints and token here.  
+        Enter your **Cloudera AI Inference Service** endpoint URLs and token below.  
         Settings are saved to disk and persist across sessions.
 
         **Endpoint URL format:**
@@ -603,60 +571,38 @@ with tab_config:
 
     st.divider()
 
+    # ── Models in use ───────────────────────────────────────────────────────
+    st.info(
+        f"**OCR Model:** {OCR_MODEL_LABEL}  ·  **Analysis Model:** {LLM_MODEL_LABEL}\n\n"
+        "These are the recommended models from the Cloudera AI Inference catalog "
+        "for document OCR and intelligent analysis respectively."
+    )
+
+    st.divider()
+
     # ── Authentication ──────────────────────────────────────────────────────
-    st.subheader("🔑 Authentication")
+    st.subheader("🔑 Token")
     new_token = st.text_input(
         "CDP / AI Inference Token:",
         value=cfg.get("inference_token", ""),
         type="password",
         help=(
-            "Your Cloudera Data Platform JWT token. This same token is used for "
-            "both OCR and LLM endpoints. You can also set the environment variable "
-            "`CAI_INFERENCE_TOKEN`."
+            "Your Cloudera Data Platform JWT token. "
+            "The same token is used for both the OCR and LLM endpoints. "
+            "You can also set `CAI_INFERENCE_TOKEN` as an environment variable."
         ),
     )
 
     st.divider()
 
-    # ── Processing Mode ─────────────────────────────────────────────────────
-    st.subheader("🔀 Processing Mode")
-    mode_options = {
-        "ocr_pipeline": "OCR → LLM Pipeline  (recommended — NeMo Retriever-Parse + LLM)",
-        "vision_llm": "Vision LLM  (send image directly to a multimodal model)",
-        "ocr_only": "OCR Only  (text extraction, no LLM)",
-    }
-    saved_mode = cfg.get("processing_mode", "ocr_pipeline")
-    new_mode = st.selectbox(
-        "Default Processing Mode:",
-        options=list(mode_options.keys()),
-        format_func=lambda k: mode_options[k],
-        index=list(mode_options.keys()).index(saved_mode),
-    )
-
-    st.divider()
-
-    # ── OCR Endpoint ────────────────────────────────────────────────────────
-    st.subheader("📷 OCR Model Endpoint")
-
-    ocr_model_labels = list(OCR_MODEL_OPTIONS.keys())
-    saved_ocr_label = cfg.get("ocr_model_label", "NeMo Retriever-Parse")
-    ocr_idx = ocr_model_labels.index(saved_ocr_label) if saved_ocr_label in ocr_model_labels else 0
-    new_ocr_label = st.selectbox(
-        "OCR Model:",
-        ocr_model_labels,
-        index=ocr_idx,
-        help="**NeMo Retriever-Parse** is recommended for document text extraction.",
-    )
-    new_ocr_model = OCR_MODEL_OPTIONS[new_ocr_label]
+    # ── NeMo Retriever-Parse endpoint ───────────────────────────────────────
+    st.subheader(f"📷 {OCR_MODEL_LABEL} Endpoint")
 
     new_ocr_url = st.text_input(
         "OCR Endpoint URL:",
         value=cfg.get("ocr_endpoint_url", ""),
         placeholder="https://ml-xxxxx.cloudera.site/namespaces/serving-default/endpoints/nemoretriever-parse/v1",
-        help=(
-            "Full URL of your deployed NeMo Retriever-Parse (or PaddleOCR) endpoint. "
-            "You can also set `CAI_OCR_ENDPOINT_URL`."
-        ),
+        help="You can also set `CAI_OCR_ENDPOINT_URL` as an environment variable.",
     )
 
     col_test_ocr, col_ocr_status = st.columns([1, 3])
@@ -673,43 +619,14 @@ with tab_config:
 
     st.divider()
 
-    # ── LLM Endpoint ────────────────────────────────────────────────────────
-    st.subheader("🤖 LLM Endpoint")
+    # ── Llama 3.3 70B endpoint ──────────────────────────────────────────────
+    st.subheader(f"🤖 {LLM_MODEL_LABEL} Endpoint")
 
     new_llm_url = st.text_input(
         "LLM Endpoint URL:",
         value=cfg.get("llm_endpoint_url", ""),
         placeholder="https://ml-xxxxx.cloudera.site/namespaces/serving-default/endpoints/llama-3-3-70b/v1",
-        help=(
-            "Full URL of your deployed LLM endpoint on Cloudera AI Inference. "
-            "You can also set `CAI_LLM_ENDPOINT_URL`."
-        ),
-    )
-
-    llm_labels = list(LLM_CATALOG.keys())
-    saved_llm_label = cfg.get("llm_model_label", "Llama 3.3 70B Instruct")
-    llm_idx = llm_labels.index(saved_llm_label) if saved_llm_label in llm_labels else 0
-    new_llm_label = st.selectbox(
-        "LLM Model:",
-        llm_labels,
-        index=llm_idx,
-        help="Select the model deployed at your LLM endpoint. Choose 'Custom' to enter a model ID manually.",
-    )
-    new_llm_model_id = LLM_CATALOG[new_llm_label]
-
-    if new_llm_model_id == "__custom__":
-        new_llm_model_id = st.text_input(
-            "Custom Model ID:",
-            value=cfg.get("llm_model_id", ""),
-            placeholder="org/model-name",
-        )
-
-    max_tokens = st.slider(
-        "Max Response Tokens:",
-        min_value=256,
-        max_value=8192,
-        value=int(cfg.get("max_tokens", 4096)),
-        step=256,
+        help="You can also set `CAI_LLM_ENDPOINT_URL` as an environment variable.",
     )
 
     col_test_llm, col_llm_status = st.columns([1, 3])
@@ -720,7 +637,7 @@ with tab_config:
             test_cfg = {
                 **cfg,
                 "llm_endpoint_url": new_llm_url,
-                "llm_model_id": new_llm_model_id,
+                "llm_model_id": LLM_MODEL_ID,
                 "inference_token": new_token,
             }
             ok, msg = test_llm_connection(test_cfg)
@@ -737,13 +654,11 @@ with tab_config:
             **cfg,
             "inference_token": new_token,
             "ocr_endpoint_url": new_ocr_url,
-            "ocr_model": new_ocr_model,
-            "ocr_model_label": new_ocr_label,
+            "ocr_model": OCR_MODEL_ID,
             "llm_endpoint_url": new_llm_url,
-            "llm_model_id": new_llm_model_id,
-            "llm_model_label": new_llm_label,
-            "processing_mode": new_mode,
-            "max_tokens": max_tokens,
+            "llm_model_id": LLM_MODEL_ID,
+            "processing_mode": cfg.get("processing_mode", "ocr_pipeline"),
+            "max_tokens": cfg.get("max_tokens", 4096),
         }
         save_config(updated)
         st.session_state.config = updated
@@ -755,15 +670,13 @@ with tab_config:
     st.subheader("📋 Environment Variable Reference")
     st.markdown(
         """
-        As an alternative to this form, you can set the following environment variables
-        before starting the application (or as CML environment variables):
+        You can pre-configure the app via CML environment variables instead of this form:
 
         | Variable | Description |
         |---|---|
-        | `CAI_INFERENCE_TOKEN` | CDP JWT / API token (used for all endpoints) |
-        | `CAI_OCR_ENDPOINT_URL` | Full URL of the OCR model endpoint |
-        | `CAI_LLM_ENDPOINT_URL` | Full URL of the LLM endpoint |
-        | `CAI_LLM_MODEL_ID` | Model ID string, e.g. `meta/llama-3.3-70b-instruct` |
+        | `CAI_INFERENCE_TOKEN` | CDP JWT token (used for all endpoints) |
+        | `CAI_OCR_ENDPOINT_URL` | Full URL of the NeMo Retriever-Parse endpoint |
+        | `CAI_LLM_ENDPOINT_URL` | Full URL of the Llama 3.3 70B endpoint |
         """
     )
 
@@ -814,16 +727,15 @@ with tab_about:
             """
         )
 
-        st.subheader("Recommended Models from the Cloudera AI Inference Catalog")
+        st.subheader("Models Used")
         st.markdown(
             """
-            | Role | Recommended Model | Why |
+            | Stage | Model | Why |
             |---|---|---|
-            | OCR / Extraction | **NeMo Retriever-Parse** | Purpose-built for document text extraction from images; returns structured, semantically-labelled blocks |
-            | OCR (alternative) | **PaddleOCR** | Lightweight OCR optimised for dense text regions |
-            | LLM Analysis | **Llama 3.3 70B Instruct** | Best general-purpose reasoning model in the catalog; excellent instruction following |
-            | Deep Reasoning / QA | **DeepSeek R1 Distill Llama 70B** | Strong logical reasoning; ideal for complex document QA |
-            | Fast / Lightweight | **Llama 3.1 8B Instruct** | Lower latency when speed matters more than depth |
+            | **OCR / Text Extraction** | **NeMo Retriever-Parse** | Purpose-built for document images; extracts formatted text with semantic labels (headings, paragraphs, tables) |
+            | **Analysis / Reasoning** | **Llama 3.3 70B Instruct** | The strongest general-purpose model in the Cloudera AI Inference catalog; handles all six use cases with high accuracy |
+
+            Both models run entirely within your Cloudera environment — no external API calls.
             """
         )
 

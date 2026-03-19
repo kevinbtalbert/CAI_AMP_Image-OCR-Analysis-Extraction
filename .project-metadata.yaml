@@ -31,12 +31,6 @@ environment_variables:
       Example: https://ml-xxxxx.cloudera.site/namespaces/serving-default/endpoints/llama-3-3-70b/v1
     required: false
 
-  CAI_LLM_MODEL_ID:
-    default: "meta/llama-3.3-70b-instruct"
-    description: >
-      Model identifier string for the LLM, e.g. meta/llama-3.3-70b-instruct.
-      Must match the model deployed at CAI_LLM_ENDPOINT_URL.
-    required: false
 
 runtimes:
   - editor: JupyterLab
