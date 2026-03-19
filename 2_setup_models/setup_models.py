@@ -14,7 +14,7 @@ it always installs the newest version without needing code changes when Ollama
 releases a new version.
 
 Environment variables (optional):
-  LOCAL_MODEL   Override the model to pull  (default: llama3.2-vision:11b)
+  LOCAL_MODEL   Override the model to pull  (default: qwen2.5vl:7b)
 """
 
 import json
@@ -33,7 +33,7 @@ import urllib.request
 # Config
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL = "llama3.2-vision:11b"
+DEFAULT_MODEL = "qwen2.5vl:7b"
 MODEL         = os.environ.get("LOCAL_MODEL", DEFAULT_MODEL)
 
 # User-writable install target — no root required.

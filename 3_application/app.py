@@ -44,15 +44,16 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 # Constants
 # ---------------------------------------------------------------------------
 
-# Vision-capable Ollama models, ordered by RAM footprint.
-# All perform OCR + analysis in a single pass — no separate OCR step needed.
+# Vision-capable Ollama models.
+# Ordered by OCR fidelity — only models that achieve high verbatim accuracy
+# are listed.  qwen2.5vl is the recommended default: purpose-built for
+# document understanding, scores 864/1000 on OCRBench and 95.7% on DocVQA.
 LOCAL_MODEL_CATALOG = {
-    "moondream2  (~1.7 GB · fastest)":             "moondream",
-    "Llama 3.2 Vision 11B  (~7.9 GB · default)":   "llama3.2-vision:11b",
-    "LLaVA 7B  (~4.7 GB · lighter)":               "llava:7b",
-    "LLaVA 13B  (~8.0 GB · higher quality)":       "llava:13b",
+    "Qwen2.5-VL 7B  (~6.0 GB · recommended)":  "qwen2.5vl:7b",
+    "Qwen2.5-VL 32B  (~21 GB · highest OCR quality)": "qwen2.5vl:32b",
+    "Llama 3.2 Vision 11B  (~7.9 GB · legacy)": "llama3.2-vision:11b",
 }
-LOCAL_MODEL_DEFAULT = "llama3.2-vision:11b"
+LOCAL_MODEL_DEFAULT = "qwen2.5vl:7b"
 OLLAMA_BASE_URL     = "http://localhost:11434"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -103,48 +104,36 @@ def _render_text(data: dict) -> str:
 
 USE_CASE_CONFIG: dict[str, dict] = {
     "Transcribing Typed Text": {
-        "schema": {
-            "type": "object",
-            "properties": {
-                "transcription": {
-                    "type": "string",
-                    "description": "Every character of printed/typed text exactly as it appears in the image, preserving line breaks and punctuation.",
-                }
-            },
-            "required": ["transcription"],
-            "additionalProperties": False,
-        },
+        # No JSON schema — grammar constraints break on quotes/backslashes that appear
+        # verbatim in source content (e.g. code strings, file paths).  Plain-text
+        # streaming with strong prompts + low temperature handles all content correctly.
+        "schema": None,
         "system": (
-            "You are an OCR engine. Populate the 'transcription' field with the "
-            "verbatim text from the image — every character, line break, and "
-            "punctuation mark exactly as printed. Nothing else goes in that field."
+            "You are a precise OCR engine. Output the verbatim text from the image "
+            "exactly as it appears — every character, symbol, line break, and "
+            "punctuation mark. Do not add explanations, summaries, or any text that "
+            "does not physically appear in the image. Stop when you reach the last "
+            "visible character."
         ),
         "user": "Transcribe all printed or typed text visible in this image.",
-        "render": _render_transcription,
+        "render": None,
         "options": {"temperature": 0.05, "repeat_penalty": 1.4, "repeat_last_n": 128,
-                    "top_k": 10, "top_p": 0.5},
+                    "top_k": 10, "top_p": 0.5, "num_ctx": 65536},
     },
     "Transcribing Handwritten Text": {
-        "schema": {
-            "type": "object",
-            "properties": {
-                "transcription": {
-                    "type": "string",
-                    "description": "Every word of handwritten text exactly as written. Use [illegible] for unreadable words.",
-                }
-            },
-            "required": ["transcription"],
-            "additionalProperties": False,
-        },
+        # Same reasoning as Transcribing Typed Text.
+        "schema": None,
         "system": (
-            "You are a handwriting OCR engine. Populate the 'transcription' field "
-            "with the verbatim handwritten text from the image, preserving line breaks. "
-            "Mark illegible words as [illegible]. Nothing else goes in that field."
+            "You are a precise handwriting OCR engine. Output the verbatim handwritten "
+            "text from the image exactly as written, preserving line breaks. Mark "
+            "illegible words as [illegible]. Do not add explanations, summaries, or any "
+            "text that does not physically appear in the image. Stop when you reach "
+            "the last visible word."
         ),
         "user": "Transcribe all handwritten text visible in this image.",
-        "render": _render_transcription,
+        "render": None,
         "options": {"temperature": 0.05, "repeat_penalty": 1.4, "repeat_last_n": 128,
-                    "top_k": 10, "top_p": 0.5},
+                    "top_k": 10, "top_p": 0.5, "num_ctx": 65536},
     },
     "Transcribing Forms": {
         "schema": {
@@ -175,7 +164,7 @@ USE_CASE_CONFIG: dict[str, dict] = {
         "user": "Extract every field and its filled-in value from this form.",
         "render": _render_form,
         "options": {"temperature": 0.05, "repeat_penalty": 1.3, "repeat_last_n": 64,
-                    "top_k": 20, "top_p": 0.6},
+                    "top_k": 20, "top_p": 0.6, "num_ctx": 65536},
     },
     "Complicated Document QA": {
         "schema": {
@@ -476,11 +465,11 @@ def _do_pull(model: str) -> None:
 # Image helpers
 # ---------------------------------------------------------------------------
 
-# llama3.2-vision processes images as 560×560 tiles (up to 4 tiles + 1 thumbnail).
-# Sending anything larger than 1120px on the longest side gives no quality gain
-# and significantly increases encoding time and model prompt tokens.
-_MAX_IMAGE_PX = 1120
-_JPEG_QUALITY = 88
+# qwen2.5vl uses dynamic resolution — it divides images into 28×28 patches
+# and can process up to 1280px on the longest side without degradation.
+# Higher resolution improves OCR accuracy on dense text (code, forms, small print).
+_MAX_IMAGE_PX = 1280
+_JPEG_QUALITY = 92
 
 
 def prepare_image(path: Path) -> tuple[str, str]:
@@ -532,11 +521,28 @@ def list_images(directory: Path) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _use_case_options(use_case: str, cfg: dict) -> dict:
-    """Return merged Ollama sampling options for a given use case."""
-    base = {
-        "num_predict": cfg.get("max_tokens", 4096),
-    }
-    uc_opts = USE_CASE_CONFIG.get(use_case, {}).get("options", {})
+    """
+    Return merged Ollama sampling options for a given use case.
+
+    For schema-constrained use cases the grammar is the natural stop signal,
+    so num_predict is set to -2 (fill context) unless the user has set a
+    lower explicit cap via the Configuration panel.  This prevents the output
+    from being truncated before the model finishes the structured field.
+    """
+    uc = USE_CASE_CONFIG.get(use_case, {})
+    has_schema = bool(uc.get("schema"))
+
+    user_max = cfg.get("max_tokens")
+    # Schema-constrained and plain-text transcription use cases both benefit from
+    # filling the context window — let the model or grammar decide when to stop.
+    is_open_ended = has_schema or uc.get("options", {}).get("num_ctx", 0) >= 16384
+    if is_open_ended:
+        base_predict = user_max if user_max else -2
+    else:
+        base_predict = user_max if user_max else 4096
+
+    base    = {"num_predict": base_predict}
+    uc_opts = uc.get("options", {})
     return {**base, **uc_opts}
 
 
@@ -560,10 +566,9 @@ def analyze_image(image_path: Path, use_case: str, cfg: dict) -> str:
     """
     Send an image to the local Ollama vision model (blocking, for batch jobs).
 
-    Uses Ollama's native /api/chat with grammar-constrained structured output:
-    the `format` field carries a JSON Schema that is enforced at the token-
-    sampling level via GBNF grammars.  The model cannot produce output that
-    violates the schema, so no post-hoc string filtering is needed.
+    schema=None  → plain-text, no format constraint (handles any special chars).
+    schema="json" → valid JSON enforced by grammar, open keys.
+    schema=<dict> → fully structured JSON schema, grammar-enforced.
     """
     model    = cfg.get("local_model", LOCAL_MODEL_DEFAULT)
     msgs     = _build_native_messages(image_path, use_case, cfg)
@@ -593,31 +598,33 @@ def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
     """
     Yield SSE lines ('data: {...}\\n\\n') for the streaming endpoint.
 
-    For schema-constrained use cases (transcription, forms, QA, summarize):
-    Ollama is called with stream=False and the JSON Schema `format` parameter.
-    Grammar-constrained sampling guarantees the response matches the schema —
-    no heuristic filtering required.  The parsed, rendered result is then
-    yielded as a single SSE token so the UI still receives it via the event
-    stream without waiting for a separate HTTP round-trip.
+    schema=None  (plain-text transcription):
+        Stream tokens directly — no format constraint, handles any character
+        including quotes, backslashes, and other special chars verbatim.
 
-    For free-form use cases (Unstructured → JSON with open schema):
-    Ollama streams with format="json", which enforces valid JSON syntax via
-    grammar but allows any keys.  Tokens are forwarded as they arrive.
+    schema="json" (Unstructured → JSON):
+        Stream with format="json" so Ollama enforces syntactically valid JSON
+        at the grammar level while allowing arbitrary keys.
+
+    schema=<dict> (Forms, QA, Summarize):
+        Blocking call with the full JSON Schema format constraint, then deliver
+        the rendered result in one SSE token.
     """
     model  = cfg.get("local_model", LOCAL_MODEL_DEFAULT)
     msgs   = _build_native_messages(image_path, use_case, cfg)
     opts   = _use_case_options(use_case, cfg)
     schema = USE_CASE_CONFIG.get(use_case, {}).get("schema")
 
-    # Free-form JSON use case: stream tokens, let Ollama enforce valid JSON.
-    if schema == "json":
-        payload = {
+    def _stream_plain(fmt=None):
+        """Stream tokens from Ollama, optionally with a format constraint."""
+        payload: dict = {
             "model":    model,
             "messages": msgs,
             "stream":   True,
-            "format":   "json",
             "options":  opts,
         }
+        if fmt:
+            payload["format"] = fmt
         try:
             with requests.post(
                 f"{OLLAMA_BASE_URL}/api/chat",
@@ -638,19 +645,25 @@ def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
                         return
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    # Plain-text streaming — no grammar constraint, all chars preserved
+    if schema is None:
+        yield from _stream_plain()
         return
 
-    # Schema-constrained use cases: use blocking call with grammar enforcement,
-    # then deliver the rendered result via SSE.
+    # Free-form JSON streaming
+    if schema == "json":
+        yield from _stream_plain(fmt="json")
+        return
+
+    # Structured JSON schema — blocking call, then render and deliver via SSE
     payload = {
         "model":    model,
         "messages": msgs,
         "stream":   False,
+        "format":   schema,
         "options":  opts,
     }
-    if schema:
-        payload["format"] = schema
-
     try:
         resp = requests.post(
             f"{OLLAMA_BASE_URL}/api/chat",
@@ -659,7 +672,7 @@ def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
         )
         resp.raise_for_status()
         raw    = resp.json().get("message", {}).get("content", "")
-        result = _parse_structured_response(raw, use_case) if schema else raw
+        result = _parse_structured_response(raw, use_case)
         yield f"data: {json.dumps({'token': result})}\n\n"
         yield f"data: {json.dumps({'done': True})}\n\n"
     except Exception as e:

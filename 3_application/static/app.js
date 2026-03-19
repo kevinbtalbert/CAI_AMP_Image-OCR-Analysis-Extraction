@@ -212,7 +212,7 @@ function setDot(id, status) {
 
 function updateSidebarPills() {
   const namePill = document.getElementById('sidebar-model-name');
-  if (namePill) namePill.textContent = state.config.local_model || 'llama3.2-vision:11b';
+  if (namePill) namePill.textContent = state.config.local_model || 'qwen2.5vl:7b';
 }
 
 // ---------------------------------------------------------------------------
@@ -796,7 +796,7 @@ const _origNavigate = navigate;
 // (navigate is already defined above; we patch it after DOMContentLoaded)
 
 async function saveConfig() {
-  const model = document.getElementById('cfg-local-model')?.value || 'llava:7b';
+  const model = document.getElementById('cfg-local-model')?.value || 'qwen2.5vl:7b';
   try {
     await api('POST', '/api/config', { local_model: model, max_tokens: 4096 });
     state.config = await api('GET', '/api/config');
