@@ -62,11 +62,12 @@ const PAGE_TITLES = {
 };
 
 const USE_CASE_HINTS = {
-  'Transcribing Typed Text':       'Extract printed or typed text from scanned documents, PDFs, or screenshots.',
-  'Transcribing Handwritten Text': 'Convert handwritten notes into searchable, editable digital text.',
-  'Transcribing Forms':            'Extract all field labels and values from structured forms.',
-  'Complicated Document QA':       'Ask a specific question and receive an answer grounded in the document content.',
-  'Unstructured Information → JSON':'Convert the document content into machine-readable structured JSON.',
+  'Transcribing Typed Text':        'Verbatim OCR — outputs the exact printed characters, line breaks, and punctuation. Nothing added, nothing omitted.',
+  'Transcribing Handwritten Text':  'Verbatim OCR of handwritten content — preserves original spelling, capitalisation, and line breaks as closely as possible.',
+  'Transcribing Forms':             'Outputs every field label and its value verbatim, one per line (e.g. "First Name: John"). Blank fields are preserved.',
+  'Complicated Document QA':        'Ask a specific question and receive an answer grounded in the document content.',
+  'Unstructured Information → JSON':'Converts document content into structured, machine-readable JSON.',
+  'Summarize Image':                'Describes and summarises the image — what it shows, its purpose, and key takeaways. Not a verbatim transcription.',
 };
 
 function navigate(section) {

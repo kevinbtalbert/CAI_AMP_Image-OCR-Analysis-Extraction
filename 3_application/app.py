@@ -63,22 +63,94 @@ USE_CASES = [
     "Transcribing Forms",
     "Complicated Document QA",
     "Unstructured Information → JSON",
+    "Summarize Image",
 ]
 
-USE_CASE_PROMPTS = {
-    "Transcribing Typed Text":
-        "Transcribe all typed text from this document exactly as it appears.",
-    "Transcribing Handwritten Text":
-        "Transcribe all handwritten text from this document exactly as it appears.",
-    "Transcribing Forms":
-        "Transcribe this form exactly, preserving all field labels and their values.",
-    "Complicated Document QA":
-        "Answer the following question based on the document: {question}",
-    "Unstructured Information → JSON": (
-        "Convert the content of this document into well-structured JSON. "
-        "Identify logical fields and group related information."
-    ),
+# System message + user prompt pair per use case.
+# system: frames the model's role and hard behavioural constraints.
+# user:   the specific task instruction for that image.
+# options: Ollama sampling overrides (layered on top of shared defaults).
+USE_CASE_CONFIG: dict[str, dict] = {
+    "Transcribing Typed Text": {
+        "system": (
+            "You are a precise OCR engine. Your ONLY job is to reproduce the text "
+            "you see in the image, verbatim. Rules you MUST follow:\n"
+            "1. Output ONLY the text that physically appears in the image.\n"
+            "2. Preserve original line breaks, capitalisation, spacing, and punctuation.\n"
+            "3. NEVER paraphrase, summarise, explain, or add any text not in the image.\n"
+            "4. NEVER repeat a line or phrase you have already output.\n"
+            "5. When you reach the end of the visible text, STOP immediately.\n"
+            "6. Do not output any preamble, headers, or closing remarks."
+        ),
+        "user": "Transcribe every character of printed or typed text visible in this image.",
+        "options": {"temperature": 0.05, "repeat_penalty": 1.4, "repeat_last_n": 128,
+                    "top_k": 10, "top_p": 0.5},
+    },
+    "Transcribing Handwritten Text": {
+        "system": (
+            "You are a precise handwriting OCR engine. Rules you MUST follow:\n"
+            "1. Output ONLY the handwritten text visible in the image, verbatim.\n"
+            "2. Preserve original line breaks, capitalisation, and punctuation.\n"
+            "3. For illegible words, output your best guess surrounded by [brackets].\n"
+            "4. NEVER paraphrase, summarise, or add explanations.\n"
+            "5. NEVER repeat a line or phrase you have already output.\n"
+            "6. When you reach the end of the handwritten text, STOP immediately.\n"
+            "7. Do not output any preamble or closing remarks."
+        ),
+        "user": "Transcribe every word of handwritten text visible in this image.",
+        "options": {"temperature": 0.05, "repeat_penalty": 1.4, "repeat_last_n": 128,
+                    "top_k": 10, "top_p": 0.5},
+    },
+    "Transcribing Forms": {
+        "system": (
+            "You are a form data extractor. Rules you MUST follow:\n"
+            "1. Output each field as 'Label: Value', one per line.\n"
+            "2. Preserve the exact field labels as printed in the form.\n"
+            "3. If a field is blank, output 'Label: (blank)'.\n"
+            "4. NEVER add fields that do not appear in the form.\n"
+            "5. NEVER repeat a field you have already output.\n"
+            "6. Do not add commentary, headings, or preamble."
+        ),
+        "user": "Extract all fields and their values from this form.",
+        "options": {"temperature": 0.05, "repeat_penalty": 1.35, "repeat_last_n": 64,
+                    "top_k": 20, "top_p": 0.6},
+    },
+    "Complicated Document QA": {
+        "system": (
+            "You are a document analyst. Answer questions using ONLY information "
+            "present in the provided document image. If the answer is not in the "
+            "document, say so. Be concise and cite the relevant section when possible."
+        ),
+        "user": "Answer the following question based on this document: {question}",
+        "options": {"temperature": 0.2, "repeat_penalty": 1.15, "repeat_last_n": 64,
+                    "top_k": 40, "top_p": 0.9},
+    },
+    "Unstructured Information → JSON": {
+        "system": (
+            "You are a structured data extractor. Rules you MUST follow:\n"
+            "1. Output ONLY valid JSON — no markdown fences, no commentary.\n"
+            "2. Identify all logical fields and group related information.\n"
+            "3. Use snake_case keys.\n"
+            "4. NEVER invent data not present in the image."
+        ),
+        "user": "Convert all information in this document into structured JSON.",
+        "options": {"temperature": 0.1, "repeat_penalty": 1.2, "repeat_last_n": 64,
+                    "top_k": 20, "top_p": 0.7},
+    },
+    "Summarize Image": {
+        "system": (
+            "You are an expert at analysing and describing images and documents. "
+            "Provide clear, informative summaries that capture the purpose, content, "
+            "and key takeaways. Write in well-structured prose."
+        ),
+        "user": "Describe and summarise the content of this image, including its purpose and key information.",
+        "options": {"temperature": 0.3, "repeat_penalty": 1.15, "repeat_last_n": 64,
+                    "top_k": 40, "top_p": 0.9},
+    },
 }
+
+# Flat prompt map kept for backward-compat (batch worker uses this for the instruction string)
+USE_CASE_PROMPTS = {k: v["user"] for k, v in USE_CASE_CONFIG.items()}
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -355,64 +427,124 @@ def list_images(directory: Path) -> list[dict]:
 # Vision LLM — Ollama
 # ---------------------------------------------------------------------------
 
-def _build_messages(image_path: Path, instruction: str) -> list[dict]:
-    """Build the Ollama chat messages list for a vision request."""
+def _use_case_options(use_case: str, cfg: dict) -> dict:
+    """Return merged Ollama sampling options for a given use case."""
+    base = {
+        "num_predict": cfg.get("max_tokens", 4096),
+    }
+    uc_opts = USE_CASE_CONFIG.get(use_case, {}).get("options", {})
+    return {**base, **uc_opts}
+
+
+def _build_ollama_messages(image_path: Path, use_case: str, cfg: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """
+    Return (openai_messages, native_messages) for a use case.
+
+    openai_messages  — for /v1/chat/completions (image_url content blocks)
+    native_messages  — for /api/chat (images list on message object)
+    """
+    uc      = USE_CASE_CONFIG.get(use_case, {})
+    system  = uc.get("system", "")
+    user    = uc.get("user", "Describe this image.")
+    if cfg and cfg.get("_qa_question") and "{question}" in user:
+        user = user.replace("{question}", cfg["_qa_question"])
     b64, mime = prepare_image(image_path)
-    return [{
+
+    openai_msgs = []
+    native_msgs = []
+    if system:
+        openai_msgs.append({"role": "system", "content": system})
+        native_msgs.append({"role": "system", "content": system})
+
+    openai_msgs.append({
         "role": "user",
         "content": [
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-            {"type": "text",      "text": instruction},
+            {"type": "text",      "text": user},
         ],
-    }]
+    })
+    native_msgs.append({
+        "role":    "user",
+        "content": user,
+        "images":  [b64],
+    })
+    return openai_msgs, native_msgs
 
 
-def analyze_image(image_path: Path, instruction: str, cfg: dict) -> str:
-    """Send an image + instruction to the local Ollama vision model (blocking)."""
-    model  = cfg.get("local_model", LOCAL_MODEL_DEFAULT)
+# Minimum phrase length and occurrence count to declare a repetition loop.
+_REP_PHRASE_LEN = 40
+_REP_MAX_COUNT  = 3
+
+
+def _detect_repetition(text: str) -> bool:
+    """
+    Return True if *text* contains a repeated phrase that indicates
+    the model is stuck in a generation loop.
+
+    Strategy: check whether any substring of length >= _REP_PHRASE_LEN
+    appears _REP_MAX_COUNT or more times consecutively in the tail of the text.
+    We only scan the last 600 characters to keep this fast.
+    """
+    tail = text[-600:]
+    n    = len(tail)
+    for plen in (60, 45, _REP_PHRASE_LEN):
+        if n < plen * _REP_MAX_COUNT:
+            continue
+        phrase = tail[-(plen * _REP_MAX_COUNT): -(plen * (_REP_MAX_COUNT - 1))]
+        if phrase and tail.count(phrase) >= _REP_MAX_COUNT:
+            return True
+    return False
+
+
+def analyze_image(image_path: Path, use_case: str, cfg: dict) -> str:
+    """
+    Send an image to the local Ollama vision model (blocking, for batch jobs).
+    Uses the OpenAI-compatible /v1 endpoint with per-use-case system messages
+    and sampling options.
+    """
+    model = cfg.get("local_model", LOCAL_MODEL_DEFAULT)
     client = OpenAI(base_url=f"{OLLAMA_BASE_URL}/v1", api_key="ollama")
+    openai_msgs, _ = _build_ollama_messages(image_path, use_case, cfg)
+    opts = _use_case_options(use_case, cfg)
 
     response = client.chat.completions.create(
         model=model,
-        messages=_build_messages(image_path, instruction),
-        max_tokens=cfg.get("max_tokens", 4096),
-        temperature=0.1,
+        messages=openai_msgs,
+        max_tokens=opts.get("num_predict", 4096),
+        temperature=opts.get("temperature", 0.1),
+        extra_body={k: v for k, v in opts.items()
+                    if k not in ("num_predict", "temperature")},
     )
     return response.choices[0].message.content
 
 
-def stream_analyze_image(image_path: Path, instruction: str, cfg: dict):
+def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
     """
     Yield SSE lines ('data: {...}\\n\\n') streaming tokens from Ollama.
 
-    Uses Ollama's native /api/chat with stream=true so the first token
-    appears within ~1-2 s instead of waiting for the full response.
+    Uses Ollama's native /api/chat with stream=true.  Includes:
+    - Per-use-case system messages and sampling options.
+    - A repetition-loop guard: if the accumulated output shows the model
+      repeating itself, generation is terminated and a warning is yielded.
     """
     model = cfg.get("local_model", LOCAL_MODEL_DEFAULT)
-    b64, mime = prepare_image(image_path)
+    _, native_msgs = _build_ollama_messages(image_path, use_case, cfg)
+    opts = _use_case_options(use_case, cfg)
 
     payload = {
         "model":    model,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                {"type": "text",      "text": instruction},
-            ],
-        }],
-        "stream":  True,
-        "options": {
-            "temperature": 0.1,
-            "num_predict": cfg.get("max_tokens", 4096),
-        },
+        "messages": native_msgs,
+        "stream":   True,
+        "options":  opts,
     }
 
+    accumulated = ""
     try:
         with requests.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json=payload,
             stream=True,
-            timeout=(10, 300),   # (connect, read)
+            timeout=(10, 300),
         ) as resp:
             resp.raise_for_status()
             for raw in resp.iter_lines():
@@ -421,7 +553,15 @@ def stream_analyze_image(image_path: Path, instruction: str, cfg: dict):
                 chunk = json.loads(raw)
                 token = chunk.get("message", {}).get("content", "")
                 if token:
+                    accumulated += token
                     yield f"data: {json.dumps({'token': token})}\n\n"
+
+                    # Repetition guard — stop early and warn
+                    if _detect_repetition(accumulated):
+                        yield (f"data: {json.dumps({'token': '\n\n⚠ [Generation stopped: repetition loop detected]'})}\n\n")
+                        yield f"data: {json.dumps({'done': True})}\n\n"
+                        return
+
                 if chunk.get("done"):
                     yield f"data: {json.dumps({'done': True})}\n\n"
                     return
@@ -487,13 +627,13 @@ def _worker():
             if not image_path.exists():
                 image_path = EXAMPLES_DIR / job["filename"]
 
-            instruction = USE_CASE_PROMPTS.get(
-                job["use_case"], "Describe the content of this document."
-            )
-            if job.get("question") and "{question}" in instruction:
-                instruction = instruction.replace("{question}", job["question"])
+            use_case = job["use_case"]
+            # Inject question into config for QA without mutating the global
+            effective_cfg = cfg.copy()
+            if job.get("question") and use_case == "Complicated Document QA":
+                effective_cfg["_qa_question"] = job["question"]
 
-            result = analyze_image(image_path, instruction, cfg)
+            result = analyze_image(image_path, use_case, effective_cfg)
 
             # Persist result as a .txt file for later download
             try:
@@ -839,13 +979,11 @@ def post_process(body: ProcessBody):
     if not image_path.exists():
         raise HTTPException(status_code=404, detail=f"Image not found: {body.filename}")
 
-    instruction = USE_CASE_PROMPTS.get(body.use_case, "Describe the content of this document.")
-    if body.question and "{question}" in instruction:
-        instruction = instruction.replace("{question}", body.question)
-
     try:
-        cfg    = load_config()
-        result = analyze_image(image_path, instruction, cfg)
+        cfg = load_config()
+        if body.question and body.use_case == "Complicated Document QA":
+            cfg["_qa_question"] = body.question
+        result = analyze_image(image_path, body.use_case, cfg)
         return {"filename": body.filename, "use_case": body.use_case, "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -867,13 +1005,11 @@ def post_process_stream(body: ProcessBody):
     if not image_path.exists():
         raise HTTPException(status_code=404, detail=f"Image not found: {body.filename}")
 
-    instruction = USE_CASE_PROMPTS.get(body.use_case, "Describe the content of this document.")
-    if body.question and "{question}" in instruction:
-        instruction = instruction.replace("{question}", body.question)
-
     cfg = load_config()
+    if body.question and body.use_case == "Complicated Document QA":
+        cfg["_qa_question"] = body.question
     return StreamingResponse(
-        stream_analyze_image(image_path, instruction, cfg),
+        stream_analyze_image(image_path, body.use_case, cfg),
         media_type="text/event-stream",
         headers={
             "Cache-Control":     "no-cache",
