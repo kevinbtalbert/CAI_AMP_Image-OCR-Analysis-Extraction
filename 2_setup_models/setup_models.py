@@ -36,8 +36,16 @@ import urllib.request
 DEFAULT_MODEL = "llama3.2-vision:11b"
 MODEL         = os.environ.get("LOCAL_MODEL", DEFAULT_MODEL)
 
-# User-writable install target — no root required
-OLLAMA_INSTALL_DIR = os.path.expanduser("~/.local/bin")
+# User-writable install target — no root required.
+# The Ollama archive has the layout:
+#   bin/ollama          → the executable
+#   lib/ollama/         → CUDA runners (essential for GPU support)
+# We extract everything to ~/.local/ so the relative paths work:
+#   ~/.local/bin/ollama
+#   ~/.local/lib/ollama/
+OLLAMA_LOCAL_DIR   = os.path.expanduser("~/.local")
+OLLAMA_INSTALL_DIR = os.path.join(OLLAMA_LOCAL_DIR, "bin")
+OLLAMA_LIB_DIR     = os.path.join(OLLAMA_LOCAL_DIR, "lib", "ollama")
 OLLAMA_BIN         = os.path.join(OLLAMA_INSTALL_DIR, "ollama")
 
 # GitHub API endpoint — returns latest release metadata including the tag
@@ -118,33 +126,49 @@ def _download(url: str, dest: str, *, label: str = "") -> bool:
         return False
 
 
-def _extract_zst_tar(archive: str, dest_bin: str) -> bool:
+def _extract_zst_tar(archive: str, prefix: str) -> bool:
     """
-    Extract the 'ollama' binary from a .tar.zst archive.
+    Extract the full Ollama .tar.zst archive into *prefix* (e.g. ~/.local/).
+
+    The archive layout is:
+        bin/ollama          → <prefix>/bin/ollama   (executable)
+        lib/ollama/         → <prefix>/lib/ollama/  (CUDA runners — GPU required!)
+
+    Extracting ONLY the binary is not enough: without lib/ollama/ Ollama
+    silently falls back to CPU mode even when a GPU is present.
 
     Primary method: Python zstandard + tarfile (pure-Python, no system deps).
     Fallback: system 'tar' command (works if zstd tool is installed).
     """
+    os.makedirs(prefix, exist_ok=True)
+
     # ── Primary: zstandard Python package ─────────────────────────────────
     try:
         import zstandard  # installed by requirements.txt
 
-        print("  Extracting via zstandard…")
+        print(f"  Extracting full archive via zstandard → {prefix}")
+        extracted = []
         with open(archive, "rb") as fh:
             dctx = zstandard.ZstdDecompressor()
             with dctx.stream_reader(fh) as reader:
                 with tarfile.open(fileobj=reader, mode="r|") as tar:
                     for member in tar:
-                        name = member.name
-                        # Match 'ollama' or 'bin/ollama' inside the archive
-                        if member.isfile() and (name == "ollama" or name.endswith("/ollama")):
-                            # Extract just this member, flattening any sub-dir
-                            member.name = "ollama"
-                            tar.extract(member, os.path.dirname(dest_bin))
-                            print(f"  Extracted '{name}' → {dest_bin}")
-                            return True
-        print("  'ollama' binary not found inside archive.")
-        return False
+                        # Skip unsafe paths (absolute paths, .. traversal)
+                        if member.name.startswith("/") or ".." in member.name:
+                            continue
+                        tar.extract(member, prefix)
+                        extracted.append(member.name)
+
+        if not extracted:
+            print("  Archive was empty — extraction failed.")
+            return False
+
+        bin_path = os.path.join(prefix, "bin", "ollama")
+        lib_path = os.path.join(prefix, "lib", "ollama")
+        print(f"  Extracted {len(extracted)} entries.")
+        print(f"  Binary : {bin_path}  (exists={os.path.isfile(bin_path)})")
+        print(f"  Lib dir: {lib_path}  (exists={os.path.isdir(lib_path)})")
+        return os.path.isfile(bin_path)
 
     except ImportError:
         print("  zstandard package not found — trying system tar…")
@@ -152,26 +176,18 @@ def _extract_zst_tar(archive: str, dest_bin: str) -> bool:
         print(f"  zstandard extraction failed: {e} — trying system tar…")
 
     # ── Fallback: system tar ───────────────────────────────────────────────
-    print("  Extracting via system tar…")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        result = subprocess.run(
-            ["tar", "-xf", archive, "-C", tmpdir],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            print(f"  tar failed: {result.stderr.strip()}")
-            return False
+    print(f"  Extracting via system tar → {prefix}")
+    result = subprocess.run(
+        ["tar", "-xf", archive, "-C", prefix],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"  tar failed: {result.stderr.strip()}")
+        return False
 
-        # Walk the extracted tree to find the binary
-        for root, _, files in os.walk(tmpdir):
-            if "ollama" in files:
-                found = os.path.join(root, "ollama")
-                shutil.copy2(found, dest_bin)
-                print(f"  Copied {found} → {dest_bin}")
-                return True
-
-    print("  'ollama' binary not found after system tar extraction.")
-    return False
+    bin_path = os.path.join(prefix, "bin", "ollama")
+    print(f"  Binary : {bin_path}  (exists={os.path.isfile(bin_path)})")
+    return os.path.isfile(bin_path)
 
 
 # ---------------------------------------------------------------------------
@@ -180,38 +196,46 @@ def _extract_zst_tar(archive: str, dest_bin: str) -> bool:
 
 def install_ollama() -> bool:
     """
-    Install Ollama to ~/.local/bin without root/sudo.
+    Install Ollama to ~/.local/ without root/sudo.
+
+    The full archive is extracted to ~/.local/ preserving paths:
+      ~/.local/bin/ollama        — executable
+      ~/.local/lib/ollama/       — CUDA runners (required for GPU)
 
     Steps:
       1. Query GitHub Releases API for the latest tag.
       2. Download ollama-linux-{arch}.tar.zst (current release format).
-      3. Extract the binary using Python zstandard (or system tar as fallback).
+      3. Extract the FULL archive (not just the binary) to ~/.local/.
     """
-    # Already installed?
-    if shutil.which("ollama"):
-        print("✓ Ollama already on PATH.")
-        return True
-    if os.path.isfile(OLLAMA_BIN) and os.access(OLLAMA_BIN, os.X_OK):
-        print(f"✓ Ollama found at {OLLAMA_BIN}.")
+    # Already installed with CUDA runners? Skip download.
+    lib_ok = os.path.isdir(OLLAMA_LIB_DIR) and bool(os.listdir(OLLAMA_LIB_DIR))
+    bin_ok = bool(shutil.which("ollama")) or (
+        os.path.isfile(OLLAMA_BIN) and os.access(OLLAMA_BIN, os.X_OK)
+    )
+    if bin_ok and lib_ok:
+        print("✓ Ollama binary and CUDA runners already present.")
         _ensure_on_path(OLLAMA_INSTALL_DIR)
+        _verify_lib_dir()
         return True
+    if bin_ok and not lib_ok:
+        print("⚠ Ollama binary found but lib/ollama/ is missing — reinstalling full archive.")
+        print("  (Previous install may have extracted only the binary; GPU requires lib/ollama/)")
+    elif not bin_ok:
+        print("  Ollama not found — installing.")
 
     system  = platform.system().lower()
     machine = platform.machine().lower()
 
     banner(f"Installing Ollama (no root) — {system}/{machine}")
-    os.makedirs(OLLAMA_INSTALL_DIR, exist_ok=True)
 
     # ── Linux ─────────────────────────────────────────────────────────────
     if system == "linux":
         arch = "arm64" if machine in ("aarch64", "arm64") else "amd64"
 
-        # Resolve latest version dynamically — no need to update code on new releases
         tag = _get_latest_ollama_tag()
         if tag:
             url = f"{_OLLAMA_DL_BASE}/{tag}/ollama-linux-{arch}.tar.zst"
         else:
-            # GitHub API unavailable — try the /releases/latest/download/ redirect
             url = (f"https://github.com/ollama/ollama/releases/latest"
                    f"/download/ollama-linux-{arch}.tar.zst")
 
@@ -221,14 +245,15 @@ def install_ollama() -> bool:
         try:
             label = f"ollama-linux-{arch}.tar.zst ({tag or 'latest'})"
             if not _download(url, tmp_path, label=label):
-                print("ERROR: Could not download Ollama binary. Check network access.")
+                print("ERROR: Could not download Ollama archive. Check network access.")
                 return False
 
-            if not _extract_zst_tar(tmp_path, OLLAMA_BIN):
+            if not _extract_zst_tar(tmp_path, OLLAMA_LOCAL_DIR):
                 return False
 
             os.chmod(OLLAMA_BIN, 0o755)
             _ensure_on_path(OLLAMA_INSTALL_DIR)
+            _verify_lib_dir()
             print(f"✓ Ollama {tag or ''} installed → {OLLAMA_BIN}")
             return True
 
@@ -238,7 +263,6 @@ def install_ollama() -> bool:
 
     # ── macOS ─────────────────────────────────────────────────────────────
     elif system == "darwin":
-        # Try Homebrew first (doesn't need root for user-space Homebrew installs)
         if shutil.which("brew"):
             result = subprocess.run(["brew", "install", "ollama"], capture_output=False)
             if result.returncode == 0:
@@ -261,7 +285,7 @@ def install_ollama() -> bool:
                 print("ERROR: Could not download Ollama for macOS.")
                 print("  Please install manually: https://ollama.com/download")
                 return False
-            if not _extract_zst_tar(tmp_path, OLLAMA_BIN):
+            if not _extract_zst_tar(tmp_path, OLLAMA_LOCAL_DIR):
                 return False
             os.chmod(OLLAMA_BIN, 0o755)
             _ensure_on_path(OLLAMA_INSTALL_DIR)
@@ -277,12 +301,76 @@ def install_ollama() -> bool:
         return False
 
 
+def _verify_lib_dir() -> None:
+    """Warn if the CUDA runner library directory is missing."""
+    if os.path.isdir(OLLAMA_LIB_DIR):
+        runners = os.listdir(OLLAMA_LIB_DIR)
+        cuda_runners = [r for r in runners if "cuda" in r.lower()]
+        print(f"  lib/ollama entries : {len(runners)}")
+        print(f"  CUDA runners found : {cuda_runners or 'none'}")
+        if not cuda_runners:
+            print("  WARNING: No CUDA runners found — GPU will not be available.")
+    else:
+        print(f"  WARNING: {OLLAMA_LIB_DIR} missing — GPU will not be available.")
+        print("  Re-run this setup script to reinstall the full Ollama archive.")
+
+
 # ---------------------------------------------------------------------------
 # 2. Start Ollama server
 # ---------------------------------------------------------------------------
 
+def _build_ollama_env() -> dict:
+    """
+    Build environment for the Ollama subprocess with GPU support.
+
+    - Adds ~/.local/lib/ollama to LD_LIBRARY_PATH so Ollama finds its
+      bundled CUDA runners even if they weren't on the system path.
+    - Sets OLLAMA_NUM_GPU based on nvidia-smi GPU count.
+    - Sets OLLAMA_RUNNERS_DIR explicitly so Ollama doesn't search for runners
+      in the wrong place when installed to a non-standard prefix.
+    """
+    env = os.environ.copy()
+
+    # Bundled CUDA runners live in ~/.local/lib/ollama/
+    lib_paths = [
+        OLLAMA_LIB_DIR,
+        os.path.join(OLLAMA_LOCAL_DIR, "lib"),
+        "/usr/local/cuda/lib64",
+        "/usr/lib/x86_64-linux-gnu",
+    ]
+    existing = env.get("LD_LIBRARY_PATH", "")
+    new_paths = ":".join(p for p in lib_paths if p not in existing)
+    env["LD_LIBRARY_PATH"] = f"{new_paths}:{existing}" if existing else new_paths
+
+    # Point Ollama at its runners directory explicitly
+    env.setdefault("OLLAMA_RUNNERS_DIR", OLLAMA_LIB_DIR)
+
+    # Count GPUs via nvidia-smi and tell Ollama how many to use
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            n_gpu = len([l for l in r.stdout.strip().splitlines() if l.strip()])
+            if n_gpu > 0:
+                env["OLLAMA_NUM_GPU"] = str(n_gpu)
+                print(f"  nvidia-smi: {n_gpu} GPU(s) — setting OLLAMA_NUM_GPU={n_gpu}")
+            else:
+                print("  nvidia-smi: no GPUs found — CPU mode")
+        else:
+            print("  nvidia-smi not available — CPU mode")
+    except Exception as e:
+        print(f"  nvidia-smi check failed: {e} — CPU mode")
+
+    cvd = env.get("CUDA_VISIBLE_DEVICES", "<not set>")
+    print(f"  CUDA_VISIBLE_DEVICES={cvd}")
+
+    return env
+
+
 def ensure_ollama_running() -> bool:
-    """Start the Ollama server if it isn't already responding."""
+    """Start the Ollama server (with GPU env) if it isn't already responding."""
     def is_up() -> bool:
         try:
             urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3)
@@ -296,11 +384,13 @@ def ensure_ollama_running() -> bool:
 
     ollama_bin = shutil.which("ollama") or OLLAMA_BIN
     print(f"  Starting Ollama server ({ollama_bin})…")
+    env = _build_ollama_env()
     subprocess.Popen(
         [ollama_bin, "serve"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
+        env=env,
     )
 
     for i in range(15):

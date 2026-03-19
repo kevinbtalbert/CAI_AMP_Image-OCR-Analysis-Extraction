@@ -130,27 +130,38 @@ def _count_nvidia_gpus() -> int:
     return 0
 
 
+_OLLAMA_LOCAL    = Path.home() / ".local"
+_OLLAMA_LIB_DIR  = _OLLAMA_LOCAL / "lib" / "ollama"
+_OLLAMA_BIN_DIR  = _OLLAMA_LOCAL / "bin"
+
+
 def _ollama_env() -> dict:
     """
     Build the environment for the Ollama subprocess.
 
-    - Appends common CUDA library paths to LD_LIBRARY_PATH so the CUDA runtime
-      is discoverable (CML may not include these by default).
+    - Prepends ~/.local/lib/ollama (bundled CUDA runners installed by setup)
+      and common CUDA library directories to LD_LIBRARY_PATH.
+    - Sets OLLAMA_RUNNERS_DIR explicitly so Ollama finds its CUDA runners
+      when installed to a non-standard prefix (~/.local/).
     - Sets OLLAMA_NUM_GPU based on the actual GPU count from nvidia-smi.
       Using nvidia-smi is more reliable than CUDA_VISIBLE_DEVICES because CML
       does not always set that variable even when a GPU is allocated.
     """
     env = os.environ.copy()
 
-    # Ensure CUDA runtime libraries are findable
-    cuda_lib_dirs = [
+    # Bundled CUDA runners + system CUDA libraries
+    lib_paths = [
+        str(_OLLAMA_LIB_DIR),           # bundled runners from setup archive
+        str(_OLLAMA_LOCAL / "lib"),
         "/usr/local/cuda/lib64",
         "/usr/lib/x86_64-linux-gnu",
-        "/usr/local/lib",
     ]
     existing = env.get("LD_LIBRARY_PATH", "")
-    additions = ":".join(d for d in cuda_lib_dirs if d not in existing)
-    env["LD_LIBRARY_PATH"] = f"{additions}:{existing}" if existing else additions
+    new_paths = ":".join(p for p in lib_paths if p not in existing)
+    env["LD_LIBRARY_PATH"] = f"{new_paths}:{existing}" if existing else new_paths
+
+    # Tell Ollama where to find its runners (critical for non-system installs)
+    env.setdefault("OLLAMA_RUNNERS_DIR", str(_OLLAMA_LIB_DIR))
 
     # Tell Ollama explicitly how many GPUs to use
     n_gpu = _count_nvidia_gpus()
@@ -160,9 +171,11 @@ def _ollama_env() -> dict:
     else:
         print("[ollama] No GPU detected via nvidia-smi — Ollama will run on CPU")
 
-    # Log CUDA_VISIBLE_DEVICES for debugging (informational only)
+    # Log key env vars for debugging
     cvd = env.get("CUDA_VISIBLE_DEVICES", "<not set>")
     print(f"[ollama] CUDA_VISIBLE_DEVICES={cvd}")
+    print(f"[ollama] OLLAMA_RUNNERS_DIR={env.get('OLLAMA_RUNNERS_DIR')}")
+    print(f"[ollama] lib/ollama exists={_OLLAMA_LIB_DIR.is_dir()}")
 
     return env
 
@@ -170,12 +183,18 @@ def _ollama_env() -> dict:
 def ollama_start() -> None:
     if not ollama_installed():
         return
+    env = _ollama_env()
+    # Ensure ~/.local/bin is on PATH so the ollama binary is found
+    local_bin = str(_OLLAMA_BIN_DIR)
+    path = env.get("PATH", "")
+    if local_bin not in path.split(os.pathsep):
+        env["PATH"] = local_bin + os.pathsep + path
     subprocess.Popen(
         ["ollama", "serve"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
-        env=_ollama_env(),
+        env=env,
     )
 
 
