@@ -8,6 +8,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import shutil
+import subprocess
+
 import requests
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +22,11 @@ from pydantic import BaseModel
 # Paths
 # ---------------------------------------------------------------------------
 
-BASE_DIR = Path(__file__).parent
+try:
+    BASE_DIR = Path(__file__).parent
+except NameError:
+    BASE_DIR = Path(os.getcwd()) / "2_application"
+
 STATIC_DIR = BASE_DIR / "static"
 EXAMPLES_DIR = BASE_DIR.parent / "data" / "examples"
 DATA_DIR = Path(os.getenv("CDSW_HOME", "/home/cdsw")) / "data"
@@ -35,6 +42,17 @@ LLM_MODEL_LABEL = "Llama 3.3 70B Instruct"
 LLM_MODEL_ID = "meta/llama-3.3-70b-instruct"
 OCR_MODEL_LABEL = "NeMo Retriever-Parse"
 OCR_MODEL_ID = "nemoretriever-parse"
+
+# Local Ollama model catalog — all vision-capable, ordered by RAM footprint
+# Recommended for 4 CPU / 16 GB RAM: llava:7b (~4.7 GB Q4)
+LOCAL_MODEL_CATALOG = {
+    "moondream2  (~1.7 GB · fastest)":           "moondream",
+    "LLaVA 7B  (~4.7 GB · recommended)":         "llava:7b",
+    "Llama 3.2 Vision 11B  (~7.9 GB · best)":    "llama3.2-vision:11b",
+    "LLaVA 13B  (~8.0 GB · higher quality)":     "llava:13b",
+}
+LOCAL_MODEL_DEFAULT = "llava:7b"
+OLLAMA_BASE_URL = "http://localhost:11434"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
@@ -63,12 +81,16 @@ USE_CASE_PROMPTS = {
 
 def default_config() -> dict:
     return {
+        # Cloudera AI Inference
         "inference_token": os.getenv("CAI_INFERENCE_TOKEN", ""),
         "ocr_endpoint_url": os.getenv("CAI_OCR_ENDPOINT_URL", ""),
         "llm_endpoint_url": os.getenv("CAI_LLM_ENDPOINT_URL", ""),
         "llm_model_id": LLM_MODEL_ID,
         "ocr_model": OCR_MODEL_ID,
         "max_tokens": 4096,
+        # Service mode
+        "service_mode": os.getenv("SERVICE_MODE", "cloudera"),  # "cloudera" | "local"
+        "local_model": os.getenv("LOCAL_MODEL", LOCAL_MODEL_DEFAULT),
     }
 
 
@@ -86,6 +108,69 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# Ollama helpers
+# ---------------------------------------------------------------------------
+
+def ollama_installed() -> bool:
+    return shutil.which("ollama") is not None
+
+
+def ollama_running() -> bool:
+    try:
+        r = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def ollama_start() -> None:
+    """Attempt to start the Ollama server in the background."""
+    if not ollama_installed():
+        return
+    subprocess.Popen(
+        ["ollama", "serve"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def ollama_list_models() -> list[str]:
+    try:
+        r = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
+        r.raise_for_status()
+        return [m["name"] for m in r.json().get("models", [])]
+    except Exception:
+        return []
+
+
+# Pull state — one pull at a time
+_pull_state: dict = {"model": None, "running": False, "error": None}
+_pull_lock = threading.Lock()
+
+
+def _do_pull(model: str) -> None:
+    with _pull_lock:
+        _pull_state.update({"model": model, "running": True, "error": None})
+    try:
+        subprocess.run(
+            ["ollama", "pull", model],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as e:
+        with _pull_lock:
+            _pull_state.update({"running": False, "error": e.stderr.decode()[:200]})
+        return
+    except Exception as e:
+        with _pull_lock:
+            _pull_state.update({"running": False, "error": str(e)[:200]})
+        return
+    with _pull_lock:
+        _pull_state.update({"running": False, "error": None})
 
 
 # ---------------------------------------------------------------------------
@@ -164,11 +249,45 @@ def call_llm(prompt: str, cfg: dict, system_prompt: str = None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Local vision LLM — Ollama
+# ---------------------------------------------------------------------------
+
+def call_local_vision_llm(image_path: Path, instruction: str, cfg: dict) -> str:
+    """Send image + instruction directly to a local Ollama vision model."""
+    model = cfg.get("local_model", LOCAL_MODEL_DEFAULT)
+    client = OpenAI(
+        base_url=f"{OLLAMA_BASE_URL}/v1",
+        api_key="ollama",           # Ollama ignores the key but the SDK requires one
+    )
+    b64 = get_base64_encoded_image(image_path)
+    media_type = get_media_type(image_path)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{b64}"}},
+                {"type": "text", "text": instruction},
+            ],
+        }],
+        max_tokens=cfg.get("max_tokens", 4096),
+        temperature=0.2,
+    )
+    return response.choices[0].message.content
+
+
+# ---------------------------------------------------------------------------
 # Process pipeline
 # ---------------------------------------------------------------------------
 
 def run_pipeline(image_path: Path, instruction: str, cfg: dict) -> dict:
-    """Run OCR → LLM pipeline. Returns {ocr_text, result}."""
+    """Route to local Ollama or Cloudera AI Inference depending on config."""
+    if cfg.get("service_mode") == "local":
+        # Local: single-step vision LLM — no separate OCR needed
+        result = call_local_vision_llm(image_path, instruction, cfg)
+        return {"ocr_text": None, "result": result}
+
+    # Cloudera: OCR → LLM pipeline
     ocr_text = call_nemoretriever_parse(image_path, cfg)
     system_prompt = (
         "You are a document analysis assistant. "
@@ -300,6 +419,12 @@ class ConfigBody(BaseModel):
     ocr_endpoint_url: str = ""
     llm_endpoint_url: str = ""
     max_tokens: int = 4096
+    service_mode: str = "cloudera"   # "cloudera" | "local"
+    local_model: str = LOCAL_MODEL_DEFAULT
+
+
+class PullModelBody(BaseModel):
+    model: str
 
 
 class ProcessBody(BaseModel):
@@ -356,6 +481,7 @@ def get_config():
         "llm_label": LLM_MODEL_LABEL,
         "llm_model_id": LLM_MODEL_ID,
     }
+    safe["local_model_catalog"] = LOCAL_MODEL_CATALOG
     safe["use_cases"] = USE_CASES
     return safe
 
@@ -370,6 +496,8 @@ def post_config(body: ConfigBody):
         "max_tokens": body.max_tokens,
         "llm_model_id": LLM_MODEL_ID,
         "ocr_model": OCR_MODEL_ID,
+        "service_mode": body.service_mode,
+        "local_model": body.local_model,
     })
     save_config(existing)
     return {"ok": True}
@@ -489,3 +617,46 @@ def clear_jobs():
         for jid in completed:
             del _jobs[jid]
     return {"cleared": len(completed)}
+
+
+# ── Ollama ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/ollama/status")
+def get_ollama_status():
+    """Return Ollama install/running state, available models, and pull progress."""
+    installed = ollama_installed()
+    running = ollama_running() if installed else False
+    models = ollama_list_models() if running else []
+    with _pull_lock:
+        pull = dict(_pull_state)
+    return {
+        "installed": installed,
+        "running": running,
+        "models": models,
+        "pull": pull,
+        "catalog": LOCAL_MODEL_CATALOG,
+    }
+
+
+@app.post("/api/ollama/start")
+def post_ollama_start():
+    if not ollama_installed():
+        raise HTTPException(status_code=400, detail="Ollama is not installed. See https://ollama.com/download")
+    if ollama_running():
+        return {"ok": True, "message": "Already running"}
+    ollama_start()
+    return {"ok": True, "message": "Start requested — allow a few seconds for Ollama to come up"}
+
+
+@app.post("/api/ollama/pull")
+def post_ollama_pull(body: PullModelBody):
+    if not ollama_installed():
+        raise HTTPException(status_code=400, detail="Ollama is not installed.")
+    if not ollama_running():
+        raise HTTPException(status_code=400, detail="Ollama server is not running. Start it first.")
+    with _pull_lock:
+        if _pull_state["running"]:
+            return {"ok": False, "message": f"Already pulling {_pull_state['model']}"}
+    t = threading.Thread(target=_do_pull, args=(body.model,), daemon=True)
+    t.start()
+    return {"ok": True, "message": f"Pulling {body.model}…"}

@@ -86,8 +86,10 @@ async function api(method, path, body) {
 async function init() {
   try {
     state.config = await api('GET', '/api/config');
+    _currentMode = state.config.service_mode || 'cloudera';
     updateStatusChips();
     updateConfigDot();
+    updateModeIndicator();
   } catch (e) {
     console.error('Init error', e);
   }
@@ -107,13 +109,21 @@ async function init() {
 // ---------------------------------------------------------------------------
 
 function updateStatusChips() {
-  const cfg = state.config;
-  const hasToken = cfg.has_token;
-  const hasOcr   = !!cfg.ocr_endpoint_url;
-  const hasLlm   = !!cfg.llm_endpoint_url;
+  const cfg  = state.config;
+  const mode = cfg.service_mode || 'cloudera';
 
-  setDot('dot-ocr', hasToken && hasOcr ? 'ok' : 'error');
-  setDot('dot-llm', hasToken && hasLlm ? 'ok' : 'error');
+  if (mode === 'local') {
+    setDot('dot-ocr', 'ok');   // No separate OCR in local mode
+    setDot('dot-llm', 'ok');   // Will validate when Ollama status is checked
+    document.getElementById('status-ocr').title = 'Local mode — vision LLM handles OCR';
+    document.getElementById('status-llm').title = `Ollama: ${cfg.local_model || 'llava:7b'}`;
+  } else {
+    const hasToken = cfg.has_token;
+    setDot('dot-ocr', hasToken && cfg.ocr_endpoint_url ? 'ok' : 'error');
+    setDot('dot-llm', hasToken && cfg.llm_endpoint_url ? 'ok' : 'error');
+    document.getElementById('status-ocr').title = 'NeMo Retriever-Parse endpoint';
+    document.getElementById('status-llm').title = 'Llama 3.3 70B endpoint';
+  }
 }
 
 function setDot(id, status) {
@@ -560,12 +570,43 @@ async function deleteImage(name) {
 // Configuration tab
 // ---------------------------------------------------------------------------
 
+let _currentMode = 'cloudera';
+let _ollamaStatusTimer = null;
+
+function setMode(mode) {
+  _currentMode = mode;
+  document.getElementById('mode-btn-cloudera').classList.toggle('active', mode === 'cloudera');
+  document.getElementById('mode-btn-local').classList.toggle('active', mode === 'local');
+  document.getElementById('cfg-cloudera-section').style.display = mode === 'cloudera' ? 'block' : 'none';
+  document.getElementById('cfg-local-section').style.display   = mode === 'local'    ? 'block' : 'none';
+  if (mode === 'local') {
+    refreshOllamaStatus();
+    if (!_ollamaStatusTimer) _ollamaStatusTimer = setInterval(refreshOllamaStatus, 4000);
+  } else {
+    clearInterval(_ollamaStatusTimer);
+    _ollamaStatusTimer = null;
+  }
+}
+
 async function loadConfigForm() {
   try {
     state.config = await api('GET', '/api/config');
-    // Don't pre-fill the token (it's write-only from UI)
     document.getElementById('cfg-ocr-url').value = state.config.ocr_endpoint_url || '';
     document.getElementById('cfg-llm-url').value = state.config.llm_endpoint_url || '';
+    document.getElementById('cfg-token').placeholder = state.config.has_token
+      ? '● Saved — paste new token to update' : 'Paste your CDP JWT token';
+
+    // Populate local model dropdown from catalog
+    const catalog = state.config.local_model_catalog || {};
+    const modelSel = document.getElementById('cfg-local-model');
+    modelSel.innerHTML = Object.entries(catalog).map(([label, id]) =>
+      `<option value="${escAttr(id)}" ${id === state.config.local_model ? 'selected' : ''}>${escHtml(label)}</option>`
+    ).join('');
+
+    // Restore mode
+    _currentMode = state.config.service_mode || 'cloudera';
+    setMode(_currentMode);
+
     updateStatusChips();
     updateConfigDot();
   } catch (e) {
@@ -574,9 +615,10 @@ async function loadConfigForm() {
 }
 
 async function saveConfig() {
-  const token  = document.getElementById('cfg-token').value.trim();
-  const ocrUrl = document.getElementById('cfg-ocr-url').value.trim();
-  const llmUrl = document.getElementById('cfg-llm-url').value.trim();
+  const token      = document.getElementById('cfg-token').value.trim();
+  const ocrUrl     = document.getElementById('cfg-ocr-url').value.trim();
+  const llmUrl     = document.getElementById('cfg-llm-url').value.trim();
+  const localModel = document.getElementById('cfg-local-model')?.value || 'llava:7b';
 
   try {
     await api('POST', '/api/config', {
@@ -584,16 +626,32 @@ async function saveConfig() {
       ocr_endpoint_url: ocrUrl,
       llm_endpoint_url: llmUrl,
       max_tokens: 4096,
+      service_mode: _currentMode,
+      local_model: localModel,
     });
     state.config = await api('GET', '/api/config');
     updateStatusChips();
     updateConfigDot();
+    updateModeIndicator();
     toast('Configuration saved', 'success');
-    // Clear token field after saving (security)
     document.getElementById('cfg-token').value = '';
-    document.getElementById('cfg-token').placeholder = state.config.has_token ? '● Saved — paste new token to update' : 'Paste your CDP JWT token';
+    document.getElementById('cfg-token').placeholder = state.config.has_token
+      ? '● Saved — paste new token to update' : 'Paste your CDP JWT token';
   } catch (e) {
     toast('Save failed: ' + e.message, 'error');
+  }
+}
+
+function updateModeIndicator() {
+  // Reflect service mode in sidebar model pills
+  const mode = state.config.service_mode || 'cloudera';
+  const pills = document.querySelector('.model-pills');
+  if (!pills) return;
+  if (mode === 'local') {
+    const model = state.config.local_model || 'llava:7b';
+    pills.innerHTML = `<span class="model-pill">Local: ${escHtml(model)}</span><span class="model-pill" style="color:var(--cldr-teal)">● Ollama</span>`;
+  } else {
+    pills.innerHTML = `<span class="model-pill">NeMo Retriever-Parse</span><span class="model-pill">Llama 3.3 70B</span>`;
   }
 }
 
@@ -630,6 +688,110 @@ async function testConnection(service) {
   } finally {
     btn.disabled = false;
     btn.textContent = 'Test';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ollama management
+// ---------------------------------------------------------------------------
+
+async function refreshOllamaStatus() {
+  try {
+    const data = await api('GET', '/api/ollama/status');
+
+    // Installed dot
+    setDot('ollama-dot-installed', data.installed ? 'ok' : 'error');
+    document.getElementById('ollama-label-installed').textContent =
+      data.installed ? 'Ollama installed' : 'Ollama not installed';
+    document.getElementById('ollama-install-hint').style.display = data.installed ? 'none' : 'block';
+
+    // Running dot
+    setDot('ollama-dot-running', data.running ? 'ok' : 'error');
+    document.getElementById('ollama-label-running').textContent =
+      data.running ? 'Server running' : 'Server not running';
+    document.getElementById('ollama-start-btn').style.display =
+      data.installed && !data.running ? 'inline-flex' : 'none';
+
+    // Pull progress
+    const pull = data.pull || {};
+    const pullSection = document.getElementById('pull-progress');
+    if (pull.running) {
+      pullSection.style.display = 'block';
+      document.getElementById('pull-label').textContent = `Pulling ${pull.model}…`;
+      // Animate the fill bar while pulling
+      document.getElementById('pull-fill').style.width = '70%';
+    } else if (pull.error) {
+      pullSection.style.display = 'block';
+      document.getElementById('pull-fill').style.width = '0';
+      document.getElementById('pull-label').textContent = `Error: ${pull.error}`;
+    } else {
+      pullSection.style.display = 'none';
+    }
+
+    // Pulled models list
+    renderPulledModels(data.models || []);
+
+    // Model availability badge
+    const localModel = document.getElementById('cfg-local-model')?.value;
+    const avail = data.models.some(m => m === localModel || m.startsWith(localModel.split(':')[0]));
+    const badge = document.getElementById('local-model-status');
+    if (data.running && avail) {
+      badge.textContent = '✓ Model ready';
+      badge.className = 'model-avail-badge ready';
+    } else if (data.running && !avail) {
+      badge.textContent = '⬇ Not pulled yet';
+      badge.className = 'model-avail-badge missing';
+    } else {
+      badge.textContent = '';
+      badge.className = 'model-avail-badge';
+    }
+
+  } catch (e) {
+    console.warn('Ollama status error', e);
+  }
+}
+
+function renderPulledModels(models) {
+  const el = document.getElementById('pulled-models-list');
+  if (!models.length) {
+    el.innerHTML = `<p class="form-hint">No models pulled yet.</p>`;
+    return;
+  }
+  el.innerHTML = `<div class="result-section-label" style="margin-bottom:8px">Pulled Models</div>` +
+    models.map(m => `<div class="pulled-model-row"><span class="model-pill" style="font-size:12px">${escHtml(m)}</span></div>`).join('');
+}
+
+async function startOllama() {
+  const btn = document.getElementById('ollama-start-btn');
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+  try {
+    const r = await api('POST', '/api/ollama/start');
+    toast(r.message, 'success');
+    setTimeout(refreshOllamaStatus, 2500);
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Start Ollama';
+  }
+}
+
+async function pullModel() {
+  const model = document.getElementById('cfg-local-model')?.value;
+  if (!model) return;
+  const btn = document.getElementById('pull-model-btn');
+  btn.disabled = true;
+  try {
+    const r = await api('POST', '/api/ollama/pull', { model });
+    toast(r.message, r.ok ? 'success' : 'error');
+    document.getElementById('pull-progress').style.display = 'block';
+    document.getElementById('pull-fill').style.width = '15%';
+    document.getElementById('pull-label').textContent = `Pulling ${model}…`;
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
   }
 }
 

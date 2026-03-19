@@ -283,73 +283,148 @@
 
       <!-- ── Configuration ────────────────────────────────────────── -->
       <section id="section-config" class="section">
-        <div class="section-grid two-col">
 
-          <div class="card">
-            <div class="card-header"><h2 class="card-title">Models in Use</h2></div>
-            <div class="card-body">
-              <div class="model-info-row">
-                <div class="model-info-icon ocr">OCR</div>
-                <div>
-                  <div class="model-info-name">NeMo Retriever-Parse</div>
-                  <div class="model-info-desc">NVIDIA NIM — purpose-built for document text extraction from images</div>
-                </div>
-              </div>
-              <div class="model-info-row">
-                <div class="model-info-icon llm">LLM</div>
-                <div>
-                  <div class="model-info-name">Llama 3.3 70B Instruct</div>
-                  <div class="model-info-desc">meta/llama-3.3-70b-instruct — strongest general-purpose model in the catalog</div>
-                </div>
-              </div>
+        <!-- Mode toggle -->
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header"><h2 class="card-title">Service Mode</h2></div>
+          <div class="card-body">
+            <div class="mode-toggle">
+              <button class="mode-btn active" id="mode-btn-cloudera" onclick="setMode('cloudera')">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.868 2.884c-.321-.772-1.415-.772-1.736 0l-1.83 4.401-4.753.381c-.833.067-1.171 1.107-.536 1.651l3.62 3.102-1.106 4.637c-.194.813.691 1.456 1.405 1.02L10 15.591l4.069 2.485c.713.436 1.598-.207 1.404-1.02l-1.106-4.637 3.62-3.102c.635-.544.297-1.584-.536-1.65l-4.752-.382-1.831-4.401z"/></svg>
+                Cloudera AI Inference
+                <span class="mode-desc">NeMo Retriever-Parse + Llama 3.3 70B</span>
+              </button>
+              <button class="mode-btn" id="mode-btn-local" onclick="setMode('local')">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 001.1 1.677A.75.75 0 0113.26 18H6.74a.75.75 0 01-.484-1.323A3.501 3.501 0 007.355 15H4.25A2.25 2.25 0 012 12.75v-8.5z"/></svg>
+                Local (Ollama)
+                <span class="mode-desc">Vision LLM — runs on this machine</span>
+              </button>
             </div>
           </div>
-
-          <div class="card">
-            <div class="card-header"><h2 class="card-title">Environment Variables</h2></div>
-            <div class="card-body">
-              <p class="form-hint" style="margin-bottom:12px">Alternatively, pre-configure via CML project environment variables:</p>
-              <table class="env-table">
-                <tr><td><code>CAI_INFERENCE_TOKEN</code></td><td>CDP JWT token</td></tr>
-                <tr><td><code>CAI_OCR_ENDPOINT_URL</code></td><td>NeMo Retriever-Parse URL</td></tr>
-                <tr><td><code>CAI_LLM_ENDPOINT_URL</code></td><td>Llama 3.3 70B URL</td></tr>
-              </table>
-            </div>
-          </div>
-
         </div>
 
-        <div class="card" style="margin-top:16px">
-          <div class="card-header"><h2 class="card-title">Service Configuration</h2></div>
-          <div class="card-body">
-            <p class="form-hint" style="margin-bottom:20px">
-              Endpoint URL format:
-              <code>https://ml-&lt;id&gt;.&lt;env&gt;.cloudera.site/namespaces/serving-default/endpoints/&lt;name&gt;/v1</code>
-            </p>
-
-            <div class="form-group">
-              <label class="form-label">CDP / AI Inference Token</label>
-              <input type="password" id="cfg-token" class="form-input" placeholder="Paste your CDP JWT token" />
-            </div>
-
-            <div class="config-endpoint-row">
-              <div class="form-group" style="flex:1">
-                <label class="form-label">NeMo Retriever-Parse Endpoint URL</label>
-                <input type="text" id="cfg-ocr-url" class="form-input" placeholder="https://ml-xxxxx…/nemoretriever-parse/v1" />
+        <!-- Cloudera section -->
+        <div id="cfg-cloudera-section">
+          <div class="section-grid two-col" style="margin-bottom:16px">
+            <div class="card">
+              <div class="card-header"><h2 class="card-title">Models in Use</h2></div>
+              <div class="card-body">
+                <div class="model-info-row">
+                  <div class="model-info-icon ocr">OCR</div>
+                  <div>
+                    <div class="model-info-name">NeMo Retriever-Parse</div>
+                    <div class="model-info-desc">NVIDIA NIM — purpose-built for document text extraction from images</div>
+                  </div>
+                </div>
+                <div class="model-info-row">
+                  <div class="model-info-icon llm">LLM</div>
+                  <div>
+                    <div class="model-info-name">Llama 3.3 70B Instruct</div>
+                    <div class="model-info-desc">meta/llama-3.3-70b-instruct — strongest general-purpose model in the catalog</div>
+                  </div>
+                </div>
               </div>
-              <button class="btn btn-ghost" onclick="testConnection('ocr')" id="test-ocr-btn">Test</button>
-              <span class="conn-status" id="conn-status-ocr"></span>
             </div>
-
-            <div class="config-endpoint-row">
-              <div class="form-group" style="flex:1">
-                <label class="form-label">Llama 3.3 70B Endpoint URL</label>
-                <input type="text" id="cfg-llm-url" class="form-input" placeholder="https://ml-xxxxx…/llama-3-3-70b/v1" />
+            <div class="card">
+              <div class="card-header"><h2 class="card-title">Environment Variables</h2></div>
+              <div class="card-body">
+                <p class="form-hint" style="margin-bottom:12px">Alternatively, pre-configure via CML project environment variables:</p>
+                <table class="env-table">
+                  <tr><td><code>CAI_INFERENCE_TOKEN</code></td><td>CDP JWT token</td></tr>
+                  <tr><td><code>CAI_OCR_ENDPOINT_URL</code></td><td>NeMo Retriever-Parse URL</td></tr>
+                  <tr><td><code>CAI_LLM_ENDPOINT_URL</code></td><td>Llama 3.3 70B URL</td></tr>
+                </table>
               </div>
-              <button class="btn btn-ghost" onclick="testConnection('llm')" id="test-llm-btn">Test</button>
-              <span class="conn-status" id="conn-status-llm"></span>
             </div>
+          </div>
 
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-header"><h2 class="card-title">Endpoint Configuration</h2></div>
+            <div class="card-body">
+              <p class="form-hint" style="margin-bottom:20px">
+                URL format: <code>https://ml-&lt;id&gt;.&lt;env&gt;.cloudera.site/namespaces/serving-default/endpoints/&lt;name&gt;/v1</code>
+              </p>
+              <div class="form-group">
+                <label class="form-label">CDP / AI Inference Token</label>
+                <input type="password" id="cfg-token" class="form-input" placeholder="Paste your CDP JWT token" />
+              </div>
+              <div class="config-endpoint-row">
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">NeMo Retriever-Parse Endpoint URL</label>
+                  <input type="text" id="cfg-ocr-url" class="form-input" placeholder="https://ml-xxxxx…/nemoretriever-parse/v1" />
+                </div>
+                <button class="btn btn-ghost" onclick="testConnection('ocr')" id="test-ocr-btn">Test</button>
+                <span class="conn-status" id="conn-status-ocr"></span>
+              </div>
+              <div class="config-endpoint-row">
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Llama 3.3 70B Endpoint URL</label>
+                  <input type="text" id="cfg-llm-url" class="form-input" placeholder="https://ml-xxxxx…/llama-3-3-70b/v1" />
+                </div>
+                <button class="btn btn-ghost" onclick="testConnection('llm')" id="test-llm-btn">Test</button>
+                <span class="conn-status" id="conn-status-llm"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Local / Ollama section -->
+        <div id="cfg-local-section" style="display:none">
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+              <h2 class="card-title">Ollama Status</h2>
+              <button class="btn btn-sm btn-ghost" onclick="refreshOllamaStatus()">↻ Refresh</button>
+            </div>
+            <div class="card-body">
+              <div class="ollama-status-row">
+                <div class="ollama-status-item">
+                  <span class="status-dot" id="ollama-dot-installed"></span>
+                  <span id="ollama-label-installed">Checking…</span>
+                </div>
+                <div class="ollama-status-item">
+                  <span class="status-dot" id="ollama-dot-running"></span>
+                  <span id="ollama-label-running">Checking…</span>
+                </div>
+                <button class="btn btn-ghost btn-sm" id="ollama-start-btn" onclick="startOllama()" style="display:none">Start Ollama</button>
+              </div>
+              <div id="ollama-install-hint" style="display:none;margin-top:12px">
+                <div class="info-banner">
+                  Ollama is not installed. Download it from <a href="https://ollama.com/download" target="_blank" style="color:var(--cldr-blue)">ollama.com/download</a>, then restart this app.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-header"><h2 class="card-title">Model Selection</h2></div>
+            <div class="card-body">
+              <p class="form-hint" style="margin-bottom:16px">
+                All models below are <strong>vision-capable</strong> — they process images directly with no separate OCR step.
+                Recommended for 4 CPU / 16 GB RAM: <strong>LLaVA 7B</strong>.
+              </p>
+              <div class="form-group">
+                <label class="form-label">Local Model</label>
+                <select id="cfg-local-model" class="form-select"></select>
+              </div>
+              <div class="local-model-row">
+                <div id="local-model-status" class="model-avail-badge"></div>
+                <button class="btn btn-ghost" id="pull-model-btn" onclick="pullModel()">
+                  <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+                  Pull Model
+                </button>
+              </div>
+              <div id="pull-progress" style="display:none;margin-top:12px">
+                <div class="pull-progress-bar"><div class="pull-progress-fill" id="pull-fill"></div></div>
+                <p class="form-hint" style="margin-top:6px" id="pull-label">Pulling…</p>
+              </div>
+              <div id="pulled-models-list" style="margin-top:16px"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Save (always visible) -->
+        <div class="card">
+          <div class="card-body" style="padding:16px 20px">
             <div class="form-actions">
               <button class="btn btn-primary" onclick="saveConfig()">
                 <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/><path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/></svg>
@@ -358,6 +433,7 @@
             </div>
           </div>
         </div>
+
       </section>
 
     </main>

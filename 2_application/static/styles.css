@@ -558,3 +558,47 @@ svg { flex-shrink: 0; }
 }
 
 code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 1px 4px; }
+
+/* ── Mode toggle ─────────────────────────────────────────────────────── */
+.mode-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mode-btn {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 4px; padding: 14px 16px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  color: var(--tx-2);
+  font-size: 14px; font-weight: 600;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: left;
+}
+.mode-btn svg { width: 18px; height: 18px; margin-bottom: 4px; }
+.mode-btn .mode-desc { font-size: 11px; font-weight: 400; color: var(--tx-3); }
+.mode-btn:hover { border-color: var(--cldr-blue); background: #fff; }
+.mode-btn.active {
+  border-color: var(--cldr-teal);
+  background: rgba(31,213,151,0.06);
+  color: var(--tx);
+}
+.mode-btn.active .mode-desc { color: var(--tx-2); }
+.mode-btn.active svg { color: var(--cldr-teal); }
+
+/* ── Ollama status ────────────────────────────────────────────────────── */
+.ollama-status-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.ollama-status-item { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; color: var(--tx-2); }
+
+.local-model-row { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.model-avail-badge { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 99px; }
+.model-avail-badge.ready   { background: #E6FBF5; color: #065F46; }
+.model-avail-badge.missing { background: #FFFBEB; color: #92400E; }
+
+.pull-progress-bar { height: 6px; background: var(--border); border-radius: 99px; overflow: hidden; }
+.pull-progress-fill { height: 100%; background: var(--cldr-teal); border-radius: 99px; transition: width 0.4s; width: 0; }
+
+.pulled-model-row { display: inline-block; margin: 3px; }
+
+.info-banner {
+  background: #EBF4FF; border: 1px solid #BEE3F8;
+  border-radius: var(--radius); padding: 10px 14px;
+  font-size: 12.5px; color: #2C5282; line-height: 1.5;
+}
