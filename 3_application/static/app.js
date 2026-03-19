@@ -57,6 +57,7 @@ const PAGE_TITLES = {
   batch:    'Batch Process',
   results:  'Results',
   images:   'Manage Images',
+  folders:  'Folders',
   config:   'Configuration',
 };
 
@@ -79,6 +80,7 @@ function navigate(section) {
   if (section === 'batch')    { refreshBatchGrid(); refreshJobList(); }
   if (section === 'results')  refreshResultsList();
   if (section === 'images')   refreshImagesList();
+  if (section === 'folders')  loadFolders();
   if (section === 'config')   loadConfigForm();
 }
 
@@ -98,8 +100,9 @@ function toast(msg, type = 'info', ms = 3500) {
 // API helpers
 // ---------------------------------------------------------------------------
 
-async function api(method, path, body) {
+async function api(method, path, body, signal) {
   const opts = { method, headers: {} };
+  if (signal) opts.signal = signal;
   if (body && !(body instanceof FormData)) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -126,6 +129,7 @@ async function init() {
     console.error('Init error', e);
   }
 
+  loadUserInfo();       // personalise header (fire-and-forget)
   await refreshImages();
   onSingleUseCaseChange();
   refreshSingleImageSelect();
@@ -303,6 +307,26 @@ function _buildPipelineHTML(stages, activeIdx, doneSet = new Set()) {
     <p class="pipeline-note">Running in background — you can switch sections freely</p>`;
 }
 
+let _singleAbort = null;
+
+function _setSingleProcessing(active) {
+  const btn     = document.getElementById('single-process-btn');
+  const stopBtn = document.getElementById('single-stop-btn');
+  if (!btn) return;
+  if (active) {
+    btn.disabled = true;
+    btn.classList.add('btn-processing');
+    btn.innerHTML = '<span class="spinner"></span> Processing…';
+    if (stopBtn) stopBtn.style.display = 'inline-flex';
+  } else {
+    btn.disabled = false;
+    btn.classList.remove('btn-processing');
+    btn.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm6.39-2.908a.75.75 0 01.766.027l3.5 2.25a.75.75 0 010 1.262l-3.5 2.25A.75.75 0 018 12.25v-4.5a.75.75 0 01.39-.658z"/></svg> Process Image`;
+    if (stopBtn) stopBtn.style.display = 'none';
+    _singleAbort = null;
+  }
+}
+
 async function runSingleProcess() {
   const uc       = document.getElementById('single-use-case').value;
   const question = document.getElementById('single-question')?.value || '';
@@ -311,31 +335,95 @@ async function runSingleProcess() {
 
   if (!filename) { toast('Please select an image.', 'error'); return; }
 
-  const btn  = document.getElementById('single-process-btn');
-  const body = document.getElementById('single-result-body');
-
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Processing…';
-
-  const model  = state.config.local_model || 'llava';
-  const stages = [{ name: 'Vision LLM', desc: model }];
-  body.innerHTML = _buildPipelineHTML(stages, 0);
+  const resultBody = document.getElementById('single-result-body');
+  _singleAbort     = new AbortController();
+  _setSingleProcessing(true);
   setActive('processing', true);
 
+  // Show a live-updating <pre> immediately so the user sees output as it arrives
+  resultBody.innerHTML = `
+    <div class="result-section-label">Analysis Result
+      <span class="stream-indicator" id="stream-indicator">
+        <span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span> generating…
+      </span>
+    </div>
+    <pre class="result-pre stream-result" id="stream-result"></pre>`;
+
+  const pre = document.getElementById('stream-result');
+  let fullText = '';
+  let errored  = false;
+
   try {
-    const result = await api('POST', '/api/process', { filename, use_case: uc, question, source: src });
-    renderSingleResult(result);
-    document.getElementById('single-copy-btn').style.display = 'inline-flex';
-    document.getElementById('single-copy-btn').dataset.text = result.result;
-    toast('Analysis complete', 'success');
+    const resp = await fetch('/api/process/stream', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ filename, use_case: uc, question, source: src }),
+      signal:  _singleAbort.signal,
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+      throw new Error(err.detail || resp.statusText);
+    }
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let   buf     = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      // SSE lines are separated by \n\n; process any complete events
+      const parts = buf.split('\n\n');
+      buf = parts.pop();   // keep the incomplete tail
+
+      for (const part of parts) {
+        for (const line of part.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const data = JSON.parse(line.slice(6));
+          if (data.error) { throw new Error(data.error); }
+          if (data.token) {
+            fullText += data.token;
+            pre.textContent = fullText;
+          }
+        }
+      }
+    }
+
+    // Hide the "generating…" indicator
+    const ind = document.getElementById('stream-indicator');
+    if (ind) ind.style.display = 'none';
+
+    if (fullText) {
+      const copyBtn = document.getElementById('single-copy-btn');
+      copyBtn.style.display = 'inline-flex';
+      copyBtn.dataset.text  = fullText;
+      toast('Analysis complete', 'success');
+    }
+
   } catch (e) {
-    body.innerHTML = `<div class="empty-state"><p style="color:var(--red)">Error: ${escHtml(e.message)}</p></div>`;
-    toast(e.message, 'error');
+    errored = true;
+    if (e.name === 'AbortError') {
+      const ind = document.getElementById('stream-indicator');
+      if (ind) ind.innerHTML = '<span style="color:var(--tx-3)">stopped</span>';
+      if (!fullText) {
+        resultBody.innerHTML = `<div class="empty-state"><p style="color:var(--tx-3)">Processing stopped.</p></div>`;
+      }
+      toast('Processing stopped', 'info');
+    } else {
+      resultBody.innerHTML = `<div class="empty-state"><p style="color:var(--red)">Error: ${escHtml(e.message)}</p></div>`;
+      toast(e.message, 'error');
+    }
   } finally {
     setActive('processing', false);
-    btn.disabled = false;
-    btn.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm6.39-2.908a.75.75 0 01.766.027l3.5 2.25a.75.75 0 010 1.262l-3.5 2.25A.75.75 0 018 12.25v-4.5a.75.75 0 01.39-.658z"/></svg> Process Image`;
+    _setSingleProcessing(false);
   }
+}
+
+function stopSingleProcess() {
+  if (_singleAbort) _singleAbort.abort();
 }
 
 function renderSingleResult(result) {
@@ -354,7 +442,7 @@ function copyResult() {
 // File upload (XHR with % progress)
 // ---------------------------------------------------------------------------
 
-function uploadFiles(files, progressId = 'batch') {
+function uploadFiles(files, progressId = 'batch', folder = '') {
   if (!files.length) return;
 
   const fd = new FormData();
@@ -387,7 +475,8 @@ function uploadFiles(files, progressId = 'batch') {
       await refreshImages();
       refreshBatchGrid();
       refreshImagesList();
-      toast(`Uploaded ${files.length} file(s)`, 'success');
+      if (folder && _activeFolder === folder) loadFolderImages(folder);
+      toast(`Uploaded ${files.length} file(s)${folder ? ` to "${folder}"` : ''}`, 'success');
     } else {
       toast('Upload failed', 'error');
     }
@@ -397,7 +486,8 @@ function uploadFiles(files, progressId = 'batch') {
     if (wrap) wrap.style.display = 'none';
     toast('Upload failed (network error)', 'error');
   });
-  xhr.open('POST', '/api/images/upload');
+  const url = folder ? `/api/images/upload?folder=${encodeURIComponent(folder)}` : '/api/images/upload';
+  xhr.open('POST', url);
   xhr.send(fd);
 }
 
@@ -945,8 +1035,172 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ---------------------------------------------------------------------------
+// User personalisation
+// ---------------------------------------------------------------------------
+
+async function loadUserInfo() {
+  try {
+    const u = await api('GET', '/api/user-info');
+    const avatar = document.getElementById('user-avatar');
+    const name   = document.getElementById('user-name');
+    const chip   = document.getElementById('user-chip');
+    if (avatar) avatar.textContent = u.initials || '?';
+    if (name)   name.textContent   = u.full_name || u.username || '';
+    if (chip)   chip.title = `${u.full_name || u.username}  ·  ${u.project}${u.domain ? '  ·  ' + u.domain : ''}`;
+    // Greet in the sidebar footer
+    const pills = document.getElementById('sidebar-model-pills');
+    if (pills && u.username) {
+      const greeting = document.createElement('span');
+      greeting.className = 'model-pill';
+      greeting.style.cssText = 'color:var(--cldr-teal);border-color:rgba(31,213,151,0.25)';
+      greeting.textContent = `👤 ${u.full_name || u.username}`;
+      pills.prepend(greeting);
+    }
+  } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// Folder management
+// ---------------------------------------------------------------------------
+
+let _activeFolder = null;
+
+async function loadFolders() {
+  try {
+    const { folders } = await api('GET', '/api/folders');
+    const list = document.getElementById('folder-list');
+    const badge = document.getElementById('nav-badge-folders');
+    if (badge) {
+      badge.textContent = folders.length;
+      badge.style.display = folders.length ? 'inline-block' : 'none';
+    }
+    if (!list) return;
+    if (!folders.length) {
+      list.innerHTML = `<div class="empty-state"><p>No folders yet. Click <strong>New Folder</strong> to create one.</p></div>`;
+      return;
+    }
+    list.innerHTML = `<div class="folder-list">${folders.map(f => `
+      <div class="folder-item${_activeFolder === f.name ? ' active' : ''}" onclick="selectFolder('${escAttr(f.name)}')">
+        <span class="folder-item-icon">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3.75 3A1.75 1.75 0 002 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-8.5A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75z"/></svg>
+        </span>
+        <div class="folder-item-body">
+          <div class="folder-item-name">${escHtml(f.name)}</div>
+          <div class="folder-item-meta">${f.count} image${f.count !== 1 ? 's' : ''} · ${_fmtSize(f.size)}</div>
+        </div>
+        <button class="folder-item-del" title="Delete folder" onclick="event.stopPropagation();deleteFolder('${escAttr(f.name)}')">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zm0 1.5h2.5a1.25 1.25 0 011.25 1.25v.31a43.29 43.29 0 00-5 0v-.31A1.25 1.25 0 018.75 2.5z"/></svg>
+        </button>
+      </div>`).join('')}</div>`;
+  } catch (e) {
+    console.error('loadFolders', e);
+  }
+}
+
+function showCreateFolderForm() {
+  document.getElementById('create-folder-form').style.display = 'flex';
+  document.getElementById('new-folder-name').focus();
+}
+function hideCreateFolderForm() {
+  document.getElementById('create-folder-form').style.display = 'none';
+  document.getElementById('new-folder-name').value = '';
+}
+
+async function createFolder() {
+  const inp  = document.getElementById('new-folder-name');
+  const name = inp.value.trim();
+  if (!name) { toast('Enter a folder name.', 'error'); return; }
+  try {
+    await api('POST', '/api/folders', { name });
+    hideCreateFolderForm();
+    toast(`Folder "${name}" created.`, 'success');
+    await loadFolders();
+    selectFolder(name);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function deleteFolder(name) {
+  if (!confirm(`Delete folder "${name}" and all its images?`)) return;
+  try {
+    await api('DELETE', `/api/folders/${encodeURIComponent(name)}`);
+    if (_activeFolder === name) {
+      _activeFolder = null;
+      document.getElementById('folder-images-title').textContent = 'Select a folder';
+      document.getElementById('folder-upload-wrap').style.display = 'none';
+      document.getElementById('folder-actions').style.display = 'none';
+      document.getElementById('folder-image-list').innerHTML = `<div class="empty-state"><p>Select a folder to view its images.</p></div>`;
+    }
+    toast(`Folder "${name}" deleted.`, 'success');
+    await loadFolders();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function selectFolder(name) {
+  _activeFolder = name;
+  document.getElementById('folder-images-title').textContent = `📁 ${name}`;
+  document.getElementById('folder-upload-wrap').style.display = 'block';
+  document.getElementById('folder-actions').style.display = 'flex';
+  loadFolders(); // refresh active highlight
+  await loadFolderImages(name);
+}
+
+async function loadFolderImages(name) {
+  const list = document.getElementById('folder-image-list');
+  list.innerHTML = `<div class="empty-state"><p>Loading…</p></div>`;
+  try {
+    const { images } = await api('GET', `/api/folders/${encodeURIComponent(name)}/images`);
+    if (!images.length) {
+      list.innerHTML = `<div class="empty-state"><p>No images in this folder yet. Upload some above.</p></div>`;
+      return;
+    }
+    list.innerHTML = images.map(img => `
+      <div class="folder-image-row">
+        <img class="folder-image-thumb" src="/images/${encodeURIComponent(name)}/${encodeURIComponent(img.name)}" alt="${escAttr(img.name)}" />
+        <span class="folder-image-name">${escHtml(img.name)}</span>
+        <span class="folder-image-size">${_fmtSize(img.size)}</span>
+      </div>`).join('');
+  } catch (e) {
+    list.innerHTML = `<div class="empty-state"><p style="color:var(--red)">${escHtml(e.message)}</p></div>`;
+  }
+}
+
+function onFolderDrop(e) {
+  e.preventDefault();
+  const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+  if (files.length) uploadFiles(files, 'folder', _activeFolder);
+}
+function onFolderFileInput(e) {
+  const files = [...e.target.files];
+  if (files.length) uploadFiles(files, 'folder', _activeFolder);
+  e.target.value = '';
+}
+
+function downloadFolderResults() {
+  if (!_activeFolder) return;
+  window.location.href = `/api/results/download?folder=${encodeURIComponent(_activeFolder)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Results download
+// ---------------------------------------------------------------------------
+
+function downloadResults() {
+  window.location.href = '/api/results/download';
+}
+
+// ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
+
+function _fmtSize(bytes) {
+  if (bytes < 1024)        return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function escHtml(str) {
   return String(str ?? '')

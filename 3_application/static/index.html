@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cloudera Image Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -52,6 +55,11 @@
         <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M1 5.25A2.25 2.25 0 013.25 3h13.5A2.25 2.25 0 0119 5.25v9.5A2.25 2.25 0 0116.75 17H3.25A2.25 2.25 0 011 14.75v-9.5zm1.5 5.81v3.69c0 .414.336.75.75.75h13.5a.75.75 0 00.75-.75v-2.69l-2.22-2.219a.75.75 0 00-1.06 0l-1.91 1.909-.48-.484a.75.75 0 00-1.06 0L6.75 13.5l-1.5-1.5-2.75.06zm0-1.56L5.03 7.45a.75.75 0 011.06 0l1.5 1.5.48-.484a.75.75 0 011.06 0l.48.483 1.91-1.908a.75.75 0 011.06 0L15 9.28V5.25a.75.75 0 00-.75-.75H3.25a.75.75 0 00-.75.75v4.25zm5-3a1 1 0 100-2 1 1 0 000 2z"/></svg>
         Manage Images
       </a>
+      <a class="nav-item" data-section="folders" onclick="navigate('folders')">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3.75 3A1.75 1.75 0 002 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-8.5A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75z"/></svg>
+        Folders
+        <span class="nav-badge" id="nav-badge-folders" style="display:none">0</span>
+      </a>
 
       <span class="nav-section-label" style="margin-top:16px">SETTINGS</span>
       <a class="nav-item" data-section="config" onclick="navigate('config')">
@@ -95,6 +103,11 @@
         <div class="status-chip" id="ollama-status-chip" title="Ollama server">
           <span class="status-dot" id="dot-ollama"></span>
           <span id="ollama-chip-label">Ollama</span>
+        </div>
+        <!-- User avatar -->
+        <div class="user-chip" id="user-chip" title="">
+          <div class="user-avatar" id="user-avatar">?</div>
+          <span class="user-name" id="user-name"></span>
         </div>
       </div>
     </header>
@@ -150,10 +163,16 @@
                 <img id="single-preview" class="image-preview" src="" alt="preview" />
               </div>
 
-              <button class="btn btn-primary btn-full" id="single-process-btn" onclick="runSingleProcess()">
-                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm6.39-2.908a.75.75 0 01.766.027l3.5 2.25a.75.75 0 010 1.262l-3.5 2.25A.75.75 0 018 12.25v-4.5a.75.75 0 01.39-.658z"/></svg>
-                Process Image
-              </button>
+              <div class="process-btn-row" id="single-process-btn-row">
+                <button class="btn btn-primary btn-full" id="single-process-btn" onclick="runSingleProcess()">
+                  <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm6.39-2.908a.75.75 0 01.766.027l3.5 2.25a.75.75 0 010 1.262l-3.5 2.25A.75.75 0 018 12.25v-4.5a.75.75 0 01.39-.658z"/></svg>
+                  Process Image
+                </button>
+                <button class="btn btn-stop" id="single-stop-btn" onclick="stopSingleProcess()" style="display:none">
+                  <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm5-2.25A.75.75 0 017.75 7h4.5a.75.75 0 01.75.75v4.5a.75.75 0 01-.75.75h-4.5A.75.75 0 017 12.25v-4.5z"/></svg>
+                  Stop
+                </button>
+              </div>
             </div>
           </div>
 
@@ -254,13 +273,82 @@
         <div class="card">
           <div class="card-header">
             <h2 class="card-title">Completed Results</h2>
-            <button class="btn btn-sm btn-ghost" onclick="clearCompletedJobs()">Clear All</button>
+            <div class="card-actions">
+              <button class="btn btn-sm btn-primary" id="download-results-btn" onclick="downloadResults()">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+                Download All (.zip)
+              </button>
+              <button class="btn btn-sm btn-ghost" onclick="clearCompletedJobs()">Clear All</button>
+            </div>
           </div>
           <div id="results-list" class="card-body">
             <div class="empty-state">
               <p>Results from processed images will appear here.</p>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- ── Folders ──────────────────────────────────────────────── -->
+      <section id="section-folders" class="section">
+        <div class="section-grid two-col">
+
+          <!-- Left: folder browser -->
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">Folders</h2>
+              <button class="btn btn-sm btn-primary" onclick="showCreateFolderForm()">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/></svg>
+                New Folder
+              </button>
+            </div>
+            <div class="card-body">
+              <div id="create-folder-form" style="display:none;margin-bottom:16px">
+                <div class="inline-form-row">
+                  <input type="text" id="new-folder-name" class="form-input" placeholder="Folder name…" style="flex:1" />
+                  <button class="btn btn-primary btn-sm" onclick="createFolder()">Create</button>
+                  <button class="btn btn-ghost btn-sm" onclick="hideCreateFolderForm()">Cancel</button>
+                </div>
+              </div>
+              <div id="folder-list"></div>
+            </div>
+          </div>
+
+          <!-- Right: images in selected folder -->
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title" id="folder-images-title">Select a folder</h2>
+              <div class="card-actions" id="folder-actions" style="display:none">
+                <button class="btn btn-sm btn-ghost" onclick="downloadFolderResults()" id="folder-dl-btn">
+                  <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+                  Download Results
+                </button>
+              </div>
+            </div>
+            <div class="card-body">
+              <!-- Upload zone for the selected folder -->
+              <div id="folder-upload-wrap" style="display:none">
+                <div class="upload-zone upload-zone-sm" id="folder-upload-zone"
+                     ondragover="event.preventDefault()"
+                     ondrop="onFolderDrop(event)"
+                     onclick="document.getElementById('folder-file-input').click()">
+                  <svg viewBox="0 0 48 48" fill="none"><path d="M24 8v24M12 20l12-12 12 12" stroke="#6B7C93" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="6" y="36" width="36" height="4" rx="2" fill="#DDE3EB"/></svg>
+                  <p>Drop images here or <strong>click to add</strong></p>
+                </div>
+                <input type="file" id="folder-file-input" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="onFolderFileInput(event)" />
+                <div class="upload-progress-wrap" id="folder-upload-progress" style="display:none">
+                  <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px;color:var(--cldr-blue);flex-shrink:0"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+                  <span class="upload-progress-label" id="folder-upload-label">Uploading…</span>
+                  <div class="upload-progress-bar"><div class="upload-progress-fill" id="folder-upload-fill" style="width:0%"></div></div>
+                  <span class="upload-progress-pct" id="folder-upload-pct">0%</span>
+                </div>
+              </div>
+              <div id="folder-image-list">
+                <div class="empty-state"><p>Select a folder to view its images.</p></div>
+              </div>
+            </div>
+          </div>
+
         </div>
       </section>
 
