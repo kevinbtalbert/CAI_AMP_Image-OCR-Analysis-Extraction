@@ -66,91 +66,195 @@ USE_CASES = [
     "Summarize Image",
 ]
 
-# System message + user prompt pair per use case.
-# system: frames the model's role and hard behavioural constraints.
-# user:   the specific task instruction for that image.
-# options: Ollama sampling overrides (layered on top of shared defaults).
+# ---------------------------------------------------------------------------
+# Per-use-case configuration
+#
+# schema:  JSON Schema passed to Ollama's `format` parameter.
+#          Ollama enforces this using GBNF grammar-constrained sampling —
+#          the model is physically unable to produce tokens outside the schema.
+#          No post-hoc string matching needed.
+# system:  Role and task framing for the model.
+# user:    Task instruction sent alongside the image.
+# options: Ollama sampling overrides.
+# render:  Callable that converts the parsed JSON response into display text.
+# ---------------------------------------------------------------------------
+
+def _render_transcription(data: dict) -> str:
+    return data.get("transcription", "")
+
+
+def _render_form(data: dict) -> str:
+    lines = []
+    for field in data.get("fields", []):
+        label = field.get("label", "").strip()
+        value = field.get("value", "").strip() or "(blank)"
+        if label:
+            lines.append(f"{label}: {value}")
+    return "\n".join(lines)
+
+
+def _render_json(data: dict) -> str:
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def _render_text(data: dict) -> str:
+    return data.get("text", "")
+
+
 USE_CASE_CONFIG: dict[str, dict] = {
     "Transcribing Typed Text": {
+        "schema": {
+            "type": "object",
+            "properties": {
+                "transcription": {
+                    "type": "string",
+                    "description": "Every character of printed/typed text exactly as it appears in the image, preserving line breaks and punctuation.",
+                }
+            },
+            "required": ["transcription"],
+            "additionalProperties": False,
+        },
         "system": (
-            "You are a precise OCR engine. Your ONLY job is to reproduce the text "
-            "you see in the image, verbatim. Rules you MUST follow:\n"
-            "1. Output ONLY the text that physically appears in the image.\n"
-            "2. Preserve original line breaks, capitalisation, spacing, and punctuation.\n"
-            "3. NEVER paraphrase, summarise, explain, or add any text not in the image.\n"
-            "4. NEVER repeat a line or phrase you have already output.\n"
-            "5. When you reach the end of the visible text, STOP immediately.\n"
-            "6. Do not output any preamble, headers, or closing remarks."
+            "You are an OCR engine. Populate the 'transcription' field with the "
+            "verbatim text from the image — every character, line break, and "
+            "punctuation mark exactly as printed. Nothing else goes in that field."
         ),
-        "user": "Transcribe every character of printed or typed text visible in this image.",
+        "user": "Transcribe all printed or typed text visible in this image.",
+        "render": _render_transcription,
         "options": {"temperature": 0.05, "repeat_penalty": 1.4, "repeat_last_n": 128,
                     "top_k": 10, "top_p": 0.5},
     },
     "Transcribing Handwritten Text": {
+        "schema": {
+            "type": "object",
+            "properties": {
+                "transcription": {
+                    "type": "string",
+                    "description": "Every word of handwritten text exactly as written. Use [illegible] for unreadable words.",
+                }
+            },
+            "required": ["transcription"],
+            "additionalProperties": False,
+        },
         "system": (
-            "You are a precise handwriting OCR engine. Rules you MUST follow:\n"
-            "1. Output ONLY the handwritten text visible in the image, verbatim.\n"
-            "2. Preserve original line breaks, capitalisation, and punctuation.\n"
-            "3. For illegible words, output your best guess surrounded by [brackets].\n"
-            "4. NEVER paraphrase, summarise, or add explanations.\n"
-            "5. NEVER repeat a line or phrase you have already output.\n"
-            "6. When you reach the end of the handwritten text, STOP immediately.\n"
-            "7. Do not output any preamble or closing remarks."
+            "You are a handwriting OCR engine. Populate the 'transcription' field "
+            "with the verbatim handwritten text from the image, preserving line breaks. "
+            "Mark illegible words as [illegible]. Nothing else goes in that field."
         ),
-        "user": "Transcribe every word of handwritten text visible in this image.",
+        "user": "Transcribe all handwritten text visible in this image.",
+        "render": _render_transcription,
         "options": {"temperature": 0.05, "repeat_penalty": 1.4, "repeat_last_n": 128,
                     "top_k": 10, "top_p": 0.5},
     },
     "Transcribing Forms": {
+        "schema": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "description": "All fields in the form, in document order.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string", "description": "Field label exactly as printed."},
+                            "value": {"type": "string", "description": "Field value as filled in. Empty string if blank."},
+                        },
+                        "required": ["label", "value"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["fields"],
+            "additionalProperties": False,
+        },
         "system": (
-            "You are a form data extractor. Rules you MUST follow:\n"
-            "1. Output each field as 'Label: Value', one per line.\n"
-            "2. Preserve the exact field labels as printed in the form.\n"
-            "3. If a field is blank, output 'Label: (blank)'.\n"
-            "4. NEVER add fields that do not appear in the form.\n"
-            "5. NEVER repeat a field you have already output.\n"
-            "6. Do not add commentary, headings, or preamble."
+            "You are a form data extractor. Populate the 'fields' array with every "
+            "label/value pair from the form, in document order. Use the exact printed "
+            "label text. Leave value as an empty string for blank fields."
         ),
-        "user": "Extract all fields and their values from this form.",
-        "options": {"temperature": 0.05, "repeat_penalty": 1.35, "repeat_last_n": 64,
+        "user": "Extract every field and its filled-in value from this form.",
+        "render": _render_form,
+        "options": {"temperature": 0.05, "repeat_penalty": 1.3, "repeat_last_n": 64,
                     "top_k": 20, "top_p": 0.6},
     },
     "Complicated Document QA": {
+        "schema": {
+            "type": "object",
+            "properties": {
+                "answer":  {"type": "string", "description": "Direct answer to the question."},
+                "section": {"type": "string", "description": "Document section or location where the answer was found. Empty string if not applicable."},
+            },
+            "required": ["answer", "section"],
+            "additionalProperties": False,
+        },
         "system": (
-            "You are a document analyst. Answer questions using ONLY information "
-            "present in the provided document image. If the answer is not in the "
-            "document, say so. Be concise and cite the relevant section when possible."
+            "You are a document analyst. Answer using ONLY information present in the "
+            "document image. If the answer is not in the document, set answer to "
+            "'Not found in document'. Cite the section or location where you found it."
         ),
         "user": "Answer the following question based on this document: {question}",
+        "render": lambda d: (
+            d.get("answer", "") +
+            (f"\n\n[Source: {d['section']}]" if d.get("section") else "")
+        ),
         "options": {"temperature": 0.2, "repeat_penalty": 1.15, "repeat_last_n": 64,
                     "top_k": 40, "top_p": 0.9},
     },
     "Unstructured Information → JSON": {
+        # No fixed schema — the model produces domain-specific keys.
+        # Ollama's format="json" still enforces valid JSON at the grammar level.
+        "schema": "json",
         "system": (
-            "You are a structured data extractor. Rules you MUST follow:\n"
-            "1. Output ONLY valid JSON — no markdown fences, no commentary.\n"
-            "2. Identify all logical fields and group related information.\n"
-            "3. Use snake_case keys.\n"
-            "4. NEVER invent data not present in the image."
+            "You are a structured data extractor. Output valid JSON only — "
+            "no markdown, no commentary. Identify all logical fields, group "
+            "related information, and use snake_case keys. Never invent data "
+            "not present in the image."
         ),
         "user": "Convert all information in this document into structured JSON.",
+        "render": lambda d: json.dumps(d, indent=2, ensure_ascii=False),
         "options": {"temperature": 0.1, "repeat_penalty": 1.2, "repeat_last_n": 64,
                     "top_k": 20, "top_p": 0.7},
     },
     "Summarize Image": {
+        "schema": {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "description": "Clear prose summary of the image content, purpose, and key information."},
+            },
+            "required": ["summary"],
+            "additionalProperties": False,
+        },
         "system": (
-            "You are an expert at analysing and describing images and documents. "
-            "Provide clear, informative summaries that capture the purpose, content, "
-            "and key takeaways. Write in well-structured prose."
+            "You are an expert at analysing images and documents. Populate the "
+            "'summary' field with a clear, informative prose summary covering the "
+            "content, purpose, and key takeaways of the image."
         ),
-        "user": "Describe and summarise the content of this image, including its purpose and key information.",
+        "user": "Summarise the content of this image.",
+        "render": lambda d: d.get("summary", ""),
         "options": {"temperature": 0.3, "repeat_penalty": 1.15, "repeat_last_n": 64,
                     "top_k": 40, "top_p": 0.9},
     },
 }
 
-# Flat prompt map kept for backward-compat (batch worker uses this for the instruction string)
+# Flat prompt map — kept for backward-compat with batch worker
 USE_CASE_PROMPTS = {k: v["user"] for k, v in USE_CASE_CONFIG.items()}
+
+
+def _parse_structured_response(raw: str, use_case: str) -> str:
+    """
+    Parse the JSON response from a schema-constrained Ollama call and
+    convert it to a human-readable string using the use-case render function.
+    Falls back to returning raw text if JSON parsing fails.
+    """
+    uc = USE_CASE_CONFIG.get(use_case, {})
+    render = uc.get("render")
+    if not render:
+        return raw
+    try:
+        data = json.loads(raw)
+        return render(data)
+    except (json.JSONDecodeError, TypeError):
+        return raw
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -436,135 +540,128 @@ def _use_case_options(use_case: str, cfg: dict) -> dict:
     return {**base, **uc_opts}
 
 
-def _build_ollama_messages(image_path: Path, use_case: str, cfg: dict | None = None) -> tuple[list[dict], list[dict]]:
-    """
-    Return (openai_messages, native_messages) for a use case.
-
-    openai_messages  — for /v1/chat/completions (image_url content blocks)
-    native_messages  — for /api/chat (images list on message object)
-    """
-    uc      = USE_CASE_CONFIG.get(use_case, {})
-    system  = uc.get("system", "")
-    user    = uc.get("user", "Describe this image.")
+def _build_native_messages(image_path: Path, use_case: str, cfg: dict | None = None) -> list[dict]:
+    """Build the Ollama-native /api/chat messages list for a use case."""
+    uc     = USE_CASE_CONFIG.get(use_case, {})
+    system = uc.get("system", "")
+    user   = uc.get("user", "Describe this image.")
     if cfg and cfg.get("_qa_question") and "{question}" in user:
         user = user.replace("{question}", cfg["_qa_question"])
-    b64, mime = prepare_image(image_path)
+    b64, _ = prepare_image(image_path)
 
-    openai_msgs = []
-    native_msgs = []
+    msgs = []
     if system:
-        openai_msgs.append({"role": "system", "content": system})
-        native_msgs.append({"role": "system", "content": system})
-
-    openai_msgs.append({
-        "role": "user",
-        "content": [
-            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-            {"type": "text",      "text": user},
-        ],
-    })
-    native_msgs.append({
-        "role":    "user",
-        "content": user,
-        "images":  [b64],
-    })
-    return openai_msgs, native_msgs
-
-
-# Minimum phrase length and occurrence count to declare a repetition loop.
-_REP_PHRASE_LEN = 40
-_REP_MAX_COUNT  = 3
-
-
-def _detect_repetition(text: str) -> bool:
-    """
-    Return True if *text* contains a repeated phrase that indicates
-    the model is stuck in a generation loop.
-
-    Strategy: check whether any substring of length >= _REP_PHRASE_LEN
-    appears _REP_MAX_COUNT or more times consecutively in the tail of the text.
-    We only scan the last 600 characters to keep this fast.
-    """
-    tail = text[-600:]
-    n    = len(tail)
-    for plen in (60, 45, _REP_PHRASE_LEN):
-        if n < plen * _REP_MAX_COUNT:
-            continue
-        phrase = tail[-(plen * _REP_MAX_COUNT): -(plen * (_REP_MAX_COUNT - 1))]
-        if phrase and tail.count(phrase) >= _REP_MAX_COUNT:
-            return True
-    return False
+        msgs.append({"role": "system", "content": system})
+    msgs.append({"role": "user", "content": user, "images": [b64]})
+    return msgs
 
 
 def analyze_image(image_path: Path, use_case: str, cfg: dict) -> str:
     """
     Send an image to the local Ollama vision model (blocking, for batch jobs).
-    Uses the OpenAI-compatible /v1 endpoint with per-use-case system messages
-    and sampling options.
-    """
-    model = cfg.get("local_model", LOCAL_MODEL_DEFAULT)
-    client = OpenAI(base_url=f"{OLLAMA_BASE_URL}/v1", api_key="ollama")
-    openai_msgs, _ = _build_ollama_messages(image_path, use_case, cfg)
-    opts = _use_case_options(use_case, cfg)
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=openai_msgs,
-        max_tokens=opts.get("num_predict", 4096),
-        temperature=opts.get("temperature", 0.1),
-        extra_body={k: v for k, v in opts.items()
-                    if k not in ("num_predict", "temperature")},
+    Uses Ollama's native /api/chat with grammar-constrained structured output:
+    the `format` field carries a JSON Schema that is enforced at the token-
+    sampling level via GBNF grammars.  The model cannot produce output that
+    violates the schema, so no post-hoc string filtering is needed.
+    """
+    model    = cfg.get("local_model", LOCAL_MODEL_DEFAULT)
+    msgs     = _build_native_messages(image_path, use_case, cfg)
+    opts     = _use_case_options(use_case, cfg)
+    schema   = USE_CASE_CONFIG.get(use_case, {}).get("schema")
+
+    payload: dict = {
+        "model":    model,
+        "messages": msgs,
+        "stream":   False,
+        "options":  opts,
+    }
+    if schema:
+        payload["format"] = schema
+
+    resp = requests.post(
+        f"{OLLAMA_BASE_URL}/api/chat",
+        json=payload,
+        timeout=(10, 300),
     )
-    return response.choices[0].message.content
+    resp.raise_for_status()
+    raw = resp.json().get("message", {}).get("content", "")
+    return _parse_structured_response(raw, use_case) if schema else raw
 
 
 def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
     """
-    Yield SSE lines ('data: {...}\\n\\n') streaming tokens from Ollama.
+    Yield SSE lines ('data: {...}\\n\\n') for the streaming endpoint.
 
-    Uses Ollama's native /api/chat with stream=true.  Includes:
-    - Per-use-case system messages and sampling options.
-    - A repetition-loop guard: if the accumulated output shows the model
-      repeating itself, generation is terminated and a warning is yielded.
+    For schema-constrained use cases (transcription, forms, QA, summarize):
+    Ollama is called with stream=False and the JSON Schema `format` parameter.
+    Grammar-constrained sampling guarantees the response matches the schema —
+    no heuristic filtering required.  The parsed, rendered result is then
+    yielded as a single SSE token so the UI still receives it via the event
+    stream without waiting for a separate HTTP round-trip.
+
+    For free-form use cases (Unstructured → JSON with open schema):
+    Ollama streams with format="json", which enforces valid JSON syntax via
+    grammar but allows any keys.  Tokens are forwarded as they arrive.
     """
-    model = cfg.get("local_model", LOCAL_MODEL_DEFAULT)
-    _, native_msgs = _build_ollama_messages(image_path, use_case, cfg)
-    opts = _use_case_options(use_case, cfg)
+    model  = cfg.get("local_model", LOCAL_MODEL_DEFAULT)
+    msgs   = _build_native_messages(image_path, use_case, cfg)
+    opts   = _use_case_options(use_case, cfg)
+    schema = USE_CASE_CONFIG.get(use_case, {}).get("schema")
 
-    payload = {
-        "model":    model,
-        "messages": native_msgs,
-        "stream":   True,
-        "options":  opts,
-    }
-
-    accumulated = ""
-    try:
-        with requests.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json=payload,
-            stream=True,
-            timeout=(10, 300),
-        ) as resp:
-            resp.raise_for_status()
-            for raw in resp.iter_lines():
-                if not raw:
-                    continue
-                chunk = json.loads(raw)
-                token = chunk.get("message", {}).get("content", "")
-                if token:
-                    accumulated += token
-                    yield f"data: {json.dumps({'token': token})}\n\n"
-
-                    # Repetition guard — stop early and warn
-                    if _detect_repetition(accumulated):
-                        yield (f"data: {json.dumps({'token': '\n\n⚠ [Generation stopped: repetition loop detected]'})}\n\n")
+    # Free-form JSON use case: stream tokens, let Ollama enforce valid JSON.
+    if schema == "json":
+        payload = {
+            "model":    model,
+            "messages": msgs,
+            "stream":   True,
+            "format":   "json",
+            "options":  opts,
+        }
+        try:
+            with requests.post(
+                f"{OLLAMA_BASE_URL}/api/chat",
+                json=payload,
+                stream=True,
+                timeout=(10, 300),
+            ) as resp:
+                resp.raise_for_status()
+                for raw in resp.iter_lines():
+                    if not raw:
+                        continue
+                    chunk = json.loads(raw)
+                    token = chunk.get("message", {}).get("content", "")
+                    if token:
+                        yield f"data: {json.dumps({'token': token})}\n\n"
+                    if chunk.get("done"):
                         yield f"data: {json.dumps({'done': True})}\n\n"
                         return
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        return
 
-                if chunk.get("done"):
-                    yield f"data: {json.dumps({'done': True})}\n\n"
-                    return
+    # Schema-constrained use cases: use blocking call with grammar enforcement,
+    # then deliver the rendered result via SSE.
+    payload = {
+        "model":    model,
+        "messages": msgs,
+        "stream":   False,
+        "options":  opts,
+    }
+    if schema:
+        payload["format"] = schema
+
+    try:
+        resp = requests.post(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json=payload,
+            timeout=(10, 300),
+        )
+        resp.raise_for_status()
+        raw    = resp.json().get("message", {}).get("content", "")
+        result = _parse_structured_response(raw, use_case) if schema else raw
+        yield f"data: {json.dumps({'token': result})}\n\n"
+        yield f"data: {json.dumps({'done': True})}\n\n"
     except Exception as e:
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
