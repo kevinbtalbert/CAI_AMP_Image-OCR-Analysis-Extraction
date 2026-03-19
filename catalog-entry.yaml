@@ -1,41 +1,49 @@
-name: Image OCR & Analysis with Cloudera AI Inference
+name: Cloudera Image Analysis
 description: >
-  Transcription and information extraction from document images using NVIDIA NIM
-  models on Cloudera's AI Inference Service. A two-stage pipeline — NeMo
-  Retriever-Parse for OCR followed by Llama 3.3 70B for analysis — enables
-  typed & handwritten text transcription, form extraction, document QA, and
-  JSON conversion, entirely within your Cloudera environment.
+  Extract, transcribe, and analyze content from document images using local vision AI
+  powered by Ollama and Qwen2.5-VL — running entirely on-cluster with no external API
+  dependencies. Supports verbatim OCR, handwritten text digitization, form extraction,
+  document Q&A, JSON conversion, and image summarization, with batch processing and
+  a built-in job queue.
 long_description: >
-  This Accelerator for ML Projects (AMP) replicates and extends the classic
-  image-analysis workflow but runs 100% on Cloudera AI Inference, with no
-  dependency on external cloud LLM providers. 
+  This Accelerator for ML Projects (AMP) provides a production-ready image analysis
+  platform that runs 100% on your CML cluster using local GPU resources.
+
+  The default model is Qwen2.5-VL 7B — purpose-built for document understanding,
+  scoring 864/1000 on OCRBench and 95.7% on DocVQA, outperforming GPT-4o-mini on
+  document tasks. A 32B variant is also available for the highest fidelity.
+
+  Output guardrails use Ollama's grammar-constrained structured output (JSON Schema
+  enforced at the token-sampling level via GBNF grammars), ensuring results conform
+  exactly to the expected structure without post-hoc string filtering.
 
   Key capabilities:
-  - Typed text transcription
+  - Verbatim typed text transcription (OCR)
   - Handwritten note digitisation
-  - Structured form extraction
+  - Structured form field extraction
   - Complex document question-answering
-  - Unstructured content → JSON conversion
-  - Custom prompt mode
+  - Unstructured content to JSON conversion
+  - Image summarization
 
-  Processing modes:
-  - OCR → LLM Pipeline (default): NeMo Retriever-Parse extracts text; an LLM analyses it
-  - Vision LLM: send images directly to a multimodal model
-  - OCR Only: raw text extraction without LLM post-processing
-
-  A built-in Configuration tab lets users set their Cloudera AI Inference
-  endpoints and token through the UI — no code changes required.
+  Additional features:
+  - Streaming token-by-token results with Stop button
+  - Batch processing with background job queue
+  - Folder management with per-folder result downloads
+  - GPU VRAM monitoring and model pre-warming
+  - Personalized UI using CML environment variables
+  - Cloudera Workbench design system styling
 
 tags:
-  - Cloudera AI Inference
-  - NVIDIA NIM
   - OCR
   - Image Analysis
   - Document Extraction
-  - LLM
-  - NeMo Retriever
-  - Llama
+  - Vision LLM
+  - Qwen2.5-VL
+  - Ollama
+  - Local AI
   - Transcription
-  - Streamlit
+  - GPU
+  - Structured Output
+  - FastAPI
 
 git_url: "https://github.com/cloudera/CAI_AMP_Image-OCR-Analysis-Extraction"

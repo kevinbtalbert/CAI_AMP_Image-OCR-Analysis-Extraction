@@ -1,9 +1,8 @@
 name: Cloudera Image Analysis
 description: >
-  Extract, transcribe, and analyze content from images using local vision AI
-  powered by Ollama. Supports typed text, handwritten text, forms, document Q&A,
-  and structured JSON extraction — all running locally with no external API
-  dependencies. Includes batch processing and a built-in job queue.
+  Extract, transcribe, and analyze content from document images using local vision AI
+  powered by Ollama and Qwen2.5-VL — running entirely on-cluster with no external API
+  dependencies.
 author: Cloudera, Inc.
 specification_version: 1.0
 prototype_version: 1.0
@@ -11,13 +10,13 @@ date: "2026-03-19"
 
 environment_variables:
   LOCAL_MODEL:
-    default: "llama3.2-vision:11b"
+    default: "qwen2.5vl:7b"
     description: >
       Ollama vision model to use for image analysis.
-      Default: llama3.2-vision:11b (~7.9 GB, recommended for 4 CPU / 16 GB RAM).
-      Lighter option: llava:7b (~4.7 GB).
+      Recommended: qwen2.5vl:7b (~6 GB VRAM, best OCR quality for size).
+      Higher fidelity: qwen2.5vl:32b (~21 GB VRAM, fits on L4 GPU).
+      Legacy: llama3.2-vision:11b (~8 GB VRAM).
     required: false
-
 
 runtimes:
   - editor: JupyterLab
@@ -36,7 +35,7 @@ tasks:
     entity_label: install_dependencies
 
   - type: create_job
-    name: Setup Local Models (Ollama + Llama 3.2 Vision)
+    name: Setup Models (Ollama + Qwen2.5-VL)
     entity_label: setup_models
     script: 2_setup_models/setup_models.py
     cpu: 4
