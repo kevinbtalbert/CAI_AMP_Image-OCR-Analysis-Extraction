@@ -43,7 +43,7 @@ entries:
       - GPU
       - Structured Output
       - FastAPI
-    git_url: "https://github.com/cloudera/CAI_AMP_Image-OCR-Analysis-Extraction.git"
+    git_url: "https://github.com/kevinbtalbert/CAI_AMP_Image-OCR-Analysis-Extraction.git"
     git_ref: "main"
     is_prototype: true
     is_community: false
