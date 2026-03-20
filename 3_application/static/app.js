@@ -54,10 +54,8 @@ function _updateGlobalProgress() {
 
 const PAGE_TITLES = {
   analysis: 'Image Analysis',
-  batch:    'Batch Process',
   results:  'Results',
-  images:   'Manage Images',
-  folders:  'Folders',
+  files:    'Files',
   config:   'Configuration',
 };
 
@@ -78,10 +76,8 @@ function navigate(section) {
   document.getElementById('page-title').textContent = PAGE_TITLES[section];
 
   if (section === 'analysis') refreshSingleImageSelect();
-  if (section === 'batch')    { refreshBatchGrid(); refreshJobList(); }
   if (section === 'results')  refreshResultsList();
-  if (section === 'images')   refreshImagesList();
-  if (section === 'folders')  loadFolders();
+  if (section === 'files')    loadFilesSection();
   if (section === 'config')   loadConfigForm();
 }
 
@@ -474,9 +470,11 @@ function uploadFiles(files, progressId = 'batch', folder = '') {
     if (wrap) wrap.style.display = 'none';
     if (xhr.status < 400) {
       await refreshImages();
-      refreshBatchGrid();
-      refreshImagesList();
-      if (folder && _activeFolder === folder) loadFolderImages(folder);
+      // Reload the Files browser if we're on that section
+      if (document.getElementById('section-files')?.classList.contains('active')) {
+        await _loadFilesTree();
+        await _loadFilesBrowser();
+      }
       toast(`Uploaded ${files.length} file(s)${folder ? ` to "${folder}"` : ''}`, 'success');
     } else {
       toast('Upload failed', 'error');
@@ -591,14 +589,30 @@ async function pollJobs() {
     refreshJobList();
     refreshResultsList();
     updateResultsBadge();
+    // Update Files job panel if visible
+    if (document.getElementById('files-jobs-panel')?.style.display !== 'none') {
+      _refreshFilesJobList();
+      // When jobs finish, reload the file browser to update OCR badges
+      const hadRunning = running > 0;
+      if (!hadRunning && _notifiedJobIds.size > 0) _loadFilesBrowser();
+    }
   } catch (_) {}
 }
 
 function updateResultsBadge() {
   const complete = state.jobs.filter(j => j.status === 'complete').length;
-  const badge    = document.getElementById('nav-badge-results');
-  if (complete > 0) { badge.textContent = complete; badge.style.display = 'inline-block'; }
-  else badge.style.display = 'none';
+  const running  = state.jobs.filter(j => j.status === 'processing' || j.status === 'queued').length;
+
+  const resBadge = document.getElementById('nav-badge-results');
+  if (resBadge) {
+    if (complete > 0) { resBadge.textContent = complete; resBadge.style.display = 'inline-block'; }
+    else resBadge.style.display = 'none';
+  }
+  const filesBadge = document.getElementById('nav-badge-files');
+  if (filesBadge) {
+    if (running > 0) { filesBadge.textContent = running; filesBadge.style.display = 'inline-block'; }
+    else filesBadge.style.display = 'none';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -756,9 +770,10 @@ async function deleteImage(name) {
   try {
     await api('DELETE', `/api/images/${encodeURIComponent(name)}`);
     await refreshImages();
-    refreshImagesList();
-    refreshBatchGrid();
     refreshSingleImageSelect();
+    if (document.getElementById('section-files')?.classList.contains('active')) {
+      await _loadFilesTree(); await _loadFilesBrowser();
+    }
     toast(`Deleted ${name}`, 'success');
   } catch (e) {
     toast('Delete failed: ' + e.message, 'error');
@@ -861,9 +876,20 @@ async function refreshOllamaStatus() {
         pullFill.classList.remove('indeterminate');
         pullFill.style.width = '100%';
         pullLabel.style.color = 'var(--green)';
-        pullLabel.textContent = '✓ Model pulled successfully';
-        setTimeout(() => { pullSec.style.display = 'none'; pullFill.style.width = '0'; pullLabel.style.color = ''; }, 4000);
-        toast('Model pulled successfully', 'success');
+        pullLabel.textContent = '✓ Model pulled — saving as active model…';
+        setTimeout(() => { pullSec.style.display = 'none'; pullFill.style.width = '0'; pullLabel.style.color = ''; }, 5000);
+        // Auto-save the pulled model as the active model so it takes effect immediately
+        (async () => {
+          try {
+            const model = document.getElementById('cfg-local-model')?.value || 'qwen2.5vl:7b';
+            await api('POST', '/api/config', { local_model: model, max_tokens: 4096 });
+            state.config = await api('GET', '/api/config');
+            updateSidebarPills();
+            toast(`Model "${model}" pulled and set as active`, 'success');
+          } catch (e) {
+            toast('Pulled OK but could not save config: ' + e.message, 'error');
+          }
+        })();
       } else {
         pullSec.style.display = 'none';
       }
@@ -1091,40 +1117,174 @@ async function loadUserInfo() {
 
 let _activeFolder = null;
 
-async function loadFolders() {
+// ---------------------------------------------------------------------------
+// Unified Files section
+// ---------------------------------------------------------------------------
+
+let _filesFolder   = null;   // null = root "All Files"; string = named folder
+let _filesSelected = new Set();
+let _filesResultSet = new Set(); // OCR_*.txt stems that have results
+
+async function loadFilesSection() {
+  _filesSelected.clear();
+  _updateFilesProcessBtn();
+  await _loadFilesTree();
+  await _loadFilesBrowser();
+}
+
+async function _loadFilesTree() {
+  const tree = document.getElementById('files-tree-list');
+  if (!tree) return;
+  const { folders } = await api('GET', '/api/folders').catch(() => ({ folders: [] }));
+  const rootImages  = await api('GET', '/api/images').catch(() => ({ uploads: [] }));
+  const rootCount   = (rootImages.uploads || []).length;
+
+  tree.innerHTML = [
+    // "All Files" row
+    `<div class="files-tree-item${_filesFolder === null ? ' active' : ''}" onclick="filesSelectFolder(null)">
+      <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M1 5.25A2.25 2.25 0 013.25 3h13.5A2.25 2.25 0 0119 5.25v9.5A2.25 2.25 0 0116.75 17H3.25A2.25 2.25 0 011 14.75v-9.5zm1.5 5.81v3.69c0 .414.336.75.75.75h13.5a.75.75 0 00.75-.75v-2.69l-2.22-2.219a.75.75 0 00-1.06 0l-1.91 1.909-.48-.484a.75.75 0 00-1.06 0L6.75 13.5l-1.5-1.5-2.75.06zm0-1.56L5.03 7.45a.75.75 0 011.06 0l1.5 1.5.48-.484a.75.75 0 011.06 0l.48.483 1.91-1.908a.75.75 0 011.06 0L15 9.28V5.25a.75.75 0 00-.75-.75H3.25a.75.75 0 00-.75.75v4.25zm5-3a1 1 0 100-2 1 1 0 000 2z"/></svg>
+      All Files
+      ${rootCount ? `<span class="files-tree-count">${rootCount}</span>` : ''}
+    </div>`,
+    // Named folder rows
+    ...folders.map(f => `
+      <div class="files-tree-item${_filesFolder === f.name ? ' active' : ''}" onclick="filesSelectFolder('${escAttr(f.name)}')">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3.75 3A1.75 1.75 0 002 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-8.5A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75z"/></svg>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.name)}</span>
+        ${f.result_count ? `<span class="files-tree-result-dot" title="${f.result_count} result${f.result_count > 1 ? 's' : ''}"></span>` : ''}
+        <span class="files-tree-count">${f.count}</span>
+        <button class="files-tree-delete" title="Delete folder" onclick="event.stopPropagation();filesDeleteFolder('${escAttr(f.name)}')">✕</button>
+      </div>`)
+  ].join('');
+}
+
+async function _loadFilesBrowser() {
+  const grid  = document.getElementById('files-grid');
+  const empty = document.getElementById('files-empty');
+  const drop  = document.getElementById('files-drop-zone');
+  if (!grid) return;
+
+  // Update breadcrumb + topbar buttons
+  const bc = document.getElementById('files-breadcrumb');
+  if (bc) bc.textContent = _filesFolder ? `📁 ${_filesFolder}` : 'All Files';
+
+  const dlBtn = document.getElementById('files-download-btn');
+
+  grid.innerHTML = '<div style="padding:20px;color:var(--tx-3);font-size:13px">Loading…</div>';
+  empty.style.display = 'none';
+  drop.style.display  = 'none';
+
+  let images = [];
+  _filesResultSet.clear();
+
   try {
-    const { folders } = await api('GET', '/api/folders');
-    const list = document.getElementById('folder-list');
-    const badge = document.getElementById('nav-badge-folders');
-    if (badge) {
-      badge.textContent = folders.length;
-      badge.style.display = folders.length ? 'inline-block' : 'none';
+    if (_filesFolder) {
+      const r = await api('GET', `/api/folders/${encodeURIComponent(_filesFolder)}/images`);
+      images = r.images || [];
+      // Load which images have results
+      const rr = await api('GET', `/api/folders/${encodeURIComponent(_filesFolder)}/results`).catch(() => ({ results: [] }));
+      (rr.results || []).forEach(fn => {
+        // OCR_{stem}.txt → stem
+        const stem = fn.replace(/^OCR_/, '').replace(/\.txt$/, '');
+        _filesResultSet.add(stem);
+      });
+      dlBtn.style.display = (rr.results || []).length ? 'inline-flex' : 'none';
+    } else {
+      const r = await api('GET', '/api/images');
+      images = r.uploads || [];
+      // Load root results
+      const rr = await api('GET', '/api/folders/root/results').catch(() => ({ results: [] }));
+      (rr.results || []).forEach(fn => {
+        const stem = fn.replace(/^OCR_/, '').replace(/\.txt$/, '');
+        _filesResultSet.add(stem);
+      });
+      dlBtn.style.display = (rr.results || []).length ? 'inline-flex' : 'none';
     }
-    if (!list) return;
-    if (!folders.length) {
-      list.innerHTML = `<div class="empty-state"><p>No folders yet. Click <strong>New Folder</strong> to create one.</p></div>`;
-      return;
-    }
-    list.innerHTML = `<div class="folder-list">${folders.map(f => `
-      <div class="folder-item${_activeFolder === f.name ? ' active' : ''}" onclick="selectFolder('${escAttr(f.name)}')">
-        <span class="folder-item-icon">
-          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3.75 3A1.75 1.75 0 002 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-8.5A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75z"/></svg>
-        </span>
-        <div class="folder-item-body">
-          <div class="folder-item-name">${escHtml(f.name)}</div>
-          <div class="folder-item-meta">${f.count} image${f.count !== 1 ? 's' : ''} · ${_fmtSize(f.size)}</div>
-        </div>
-        <button class="folder-item-del" title="Delete folder" onclick="event.stopPropagation();deleteFolder('${escAttr(f.name)}')">
-          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zm0 1.5h2.5a1.25 1.25 0 011.25 1.25v.31a43.29 43.29 0 00-5 0v-.31A1.25 1.25 0 018.75 2.5z"/></svg>
-        </button>
-      </div>`).join('')}</div>`;
   } catch (e) {
-    console.error('loadFolders', e);
+    grid.innerHTML = `<div style="padding:20px;color:var(--red);font-size:13px">${escHtml(e.message)}</div>`;
+    return;
   }
+
+  if (!images.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'flex';
+    drop.style.display  = 'flex';
+    document.getElementById('files-select-all-btn').style.display = 'none';
+    document.getElementById('files-clear-btn').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('files-select-all-btn').style.display = 'inline-flex';
+  document.getElementById('files-clear-btn').style.display = 'inline-flex';
+
+  const imgSrc = name => _filesFolder
+    ? `/images/${encodeURIComponent(_filesFolder)}/${encodeURIComponent(name)}`
+    : `/images/${encodeURIComponent(name)}`;
+
+  grid.innerHTML = images.map(img => {
+    const sel = _filesSelected.has(img.name);
+    const hasResult = _filesResultSet.has(Path_stem(img.name));
+    return `<div class="file-tile${sel ? ' selected' : ''}" id="tile-${escAttr(img.name)}" onclick="filesToggle('${escAttr(img.name)}')">
+      <div class="file-tile-cb"></div>
+      ${hasResult ? '<span class="file-tile-result-badge">OCR</span>' : ''}
+      <img src="${imgSrc(img.name)}" alt="${escAttr(img.name)}" loading="lazy" />
+      <div class="file-tile-name" title="${escAttr(img.name)}">${escHtml(img.name)}</div>
+      <button class="file-tile-del" onclick="event.stopPropagation();filesDeleteImage('${escAttr(img.name)}')" title="Delete">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function Path_stem(filename) {
+  return filename.replace(/\.[^.]+$/, '');
+}
+
+function filesToggle(name) {
+  const tile = document.getElementById(`tile-${name}`);
+  if (!tile) return;
+  if (_filesSelected.has(name)) {
+    _filesSelected.delete(name);
+    tile.classList.remove('selected');
+  } else {
+    _filesSelected.add(name);
+    tile.classList.add('selected');
+  }
+  _updateFilesProcessBtn();
+}
+
+function filesSelectAll() {
+  document.querySelectorAll('.file-tile').forEach(t => {
+    const name = t.id.replace('tile-', '');
+    _filesSelected.add(name);
+    t.classList.add('selected');
+  });
+  _updateFilesProcessBtn();
+}
+
+function filesClearSelection() {
+  _filesSelected.clear();
+  document.querySelectorAll('.file-tile').forEach(t => t.classList.remove('selected'));
+  _updateFilesProcessBtn();
+}
+
+function _updateFilesProcessBtn() {
+  const btn   = document.getElementById('files-process-btn');
+  const count = document.getElementById('files-sel-count');
+  if (!btn) return;
+  const n = _filesSelected.size;
+  btn.style.display = n > 0 ? 'inline-flex' : 'none';
+  if (count) count.textContent = n;
+}
+
+async function filesSelectFolder(name) {
+  _filesFolder = name;
+  _filesSelected.clear();
+  hideFilesProcessBar();
+  await _loadFilesTree();
+  await _loadFilesBrowser();
 }
 
 function showCreateFolderForm() {
-  document.getElementById('create-folder-form').style.display = 'flex';
+  document.getElementById('create-folder-form').style.display = 'block';
   document.getElementById('new-folder-name').focus();
 }
 function hideCreateFolderForm() {
@@ -1140,74 +1300,116 @@ async function createFolder() {
     await api('POST', '/api/folders', { name });
     hideCreateFolderForm();
     toast(`Folder "${name}" created.`, 'success');
-    await loadFolders();
-    selectFolder(name);
+    await filesSelectFolder(name);
   } catch (e) {
     toast(e.message, 'error');
   }
 }
 
-async function deleteFolder(name) {
+async function filesDeleteFolder(name) {
   if (!confirm(`Delete folder "${name}" and all its images?`)) return;
   try {
     await api('DELETE', `/api/folders/${encodeURIComponent(name)}`);
-    if (_activeFolder === name) {
-      _activeFolder = null;
-      document.getElementById('folder-images-title').textContent = 'Select a folder';
-      document.getElementById('folder-upload-wrap').style.display = 'none';
-      document.getElementById('folder-actions').style.display = 'none';
-      document.getElementById('folder-image-list').innerHTML = `<div class="empty-state"><p>Select a folder to view its images.</p></div>`;
-    }
     toast(`Folder "${name}" deleted.`, 'success');
-    await loadFolders();
+    if (_filesFolder === name) await filesSelectFolder(null);
+    else await _loadFilesTree();
   } catch (e) {
     toast(e.message, 'error');
   }
 }
 
-async function selectFolder(name) {
-  _activeFolder = name;
-  document.getElementById('folder-images-title').textContent = `📁 ${name}`;
-  document.getElementById('folder-upload-wrap').style.display = 'block';
-  document.getElementById('folder-actions').style.display = 'flex';
-  loadFolders(); // refresh active highlight
-  await loadFolderImages(name);
-}
-
-async function loadFolderImages(name) {
-  const list = document.getElementById('folder-image-list');
-  list.innerHTML = `<div class="empty-state"><p>Loading…</p></div>`;
+async function filesDeleteImage(name) {
+  if (!confirm(`Delete "${name}"?`)) return;
   try {
-    const { images } = await api('GET', `/api/folders/${encodeURIComponent(name)}/images`);
-    if (!images.length) {
-      list.innerHTML = `<div class="empty-state"><p>No images in this folder yet. Upload some above.</p></div>`;
-      return;
-    }
-    list.innerHTML = images.map(img => `
-      <div class="folder-image-row">
-        <img class="folder-image-thumb" src="/images/${encodeURIComponent(name)}/${encodeURIComponent(img.name)}" alt="${escAttr(img.name)}" />
-        <span class="folder-image-name">${escHtml(img.name)}</span>
-        <span class="folder-image-size">${_fmtSize(img.size)}</span>
-      </div>`).join('');
+    const q = _filesFolder ? `?folder=${encodeURIComponent(_filesFolder)}` : '';
+    await api('DELETE', `/api/images/${encodeURIComponent(name)}${q}`);
+    _filesSelected.delete(name);
+    _updateFilesProcessBtn();
+    await _loadFilesBrowser();
   } catch (e) {
-    list.innerHTML = `<div class="empty-state"><p style="color:var(--red)">${escHtml(e.message)}</p></div>`;
+    toast(e.message, 'error');
   }
 }
 
-function onFolderDrop(e) {
-  e.preventDefault();
-  const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
-  if (files.length) uploadFiles(files, 'folder', _activeFolder);
+function showFilesProcessBar() {
+  if (!_filesSelected.size) return;
+  document.getElementById('files-process-bar').style.display = 'block';
+  _onFilesUseCaseChange();
 }
-function onFolderFileInput(e) {
-  const files = [...e.target.files];
-  if (files.length) uploadFiles(files, 'folder', _activeFolder);
-  e.target.value = '';
+function hideFilesProcessBar() {
+  const bar = document.getElementById('files-process-bar');
+  if (bar) bar.style.display = 'none';
+}
+function _onFilesUseCaseChange() {
+  const uc = document.getElementById('files-use-case')?.value || '';
+  const qg = document.getElementById('files-question-group');
+  if (qg) qg.style.display = uc === 'Complicated Document QA' ? 'block' : 'none';
 }
 
-function downloadFolderResults() {
-  if (!_activeFolder) return;
-  window.location.href = `/api/results/download?folder=${encodeURIComponent(_activeFolder)}`;
+async function queueFilesSelected() {
+  const useCase  = document.getElementById('files-use-case')?.value || 'Summarize Image';
+  const question = document.getElementById('files-question')?.value || '';
+  const names    = [..._filesSelected];
+  if (!names.length) return;
+  try {
+    await api('POST', '/api/batch', {
+      filenames: names,
+      use_case:  useCase,
+      question,
+      folder:    _filesFolder || '',
+    });
+    toast(`Queued ${names.length} job${names.length > 1 ? 's' : ''}.`, 'success');
+    hideFilesProcessBar();
+    filesClearSelection();
+    _showFilesJobsPanel();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+function _showFilesJobsPanel() {
+  const panel = document.getElementById('files-jobs-panel');
+  if (panel) panel.style.display = 'block';
+  _refreshFilesJobList();
+}
+
+function _refreshFilesJobList() {
+  const list = document.getElementById('files-job-list');
+  if (!list) return;
+  const jobs = (state.jobs || []).slice().reverse().slice(0, 30);
+  if (!jobs.length) {
+    list.innerHTML = '<div style="padding:12px 14px;font-size:13px;color:var(--tx-3)">No jobs yet.</div>';
+    return;
+  }
+  const icons = {
+    queued:     '<svg class="files-job-icon" style="color:var(--tx-3)" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>',
+    processing: '<svg class="files-job-icon" style="color:var(--blue)" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39z"/></svg>',
+    complete:   '<svg class="files-job-icon" style="color:var(--green)" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"/></svg>',
+    error:      '<svg class="files-job-icon" style="color:var(--red)" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z"/></svg>',
+  };
+  list.innerHTML = jobs.map(j => `
+    <div class="files-job-row">
+      ${icons[j.status] || ''}
+      <span class="files-job-file">${escHtml(j.filename)}</span>
+      <span class="files-job-use-case">${escHtml(j.use_case)}</span>
+      <span class="files-job-status ${j.status}">${j.status === 'complete' ? 'Done' : j.status === 'error' ? 'Error' : j.status === 'processing' ? 'Processing…' : 'Queued'}</span>
+    </div>`).join('');
+}
+
+function onFilesUpload(e) {
+  const files = [...e.target.files];
+  if (files.length) uploadFiles(files, 'folder', _filesFolder);
+  e.target.value = '';
+}
+function onFilesDrop(e) {
+  e.preventDefault();
+  const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+  if (files.length) uploadFiles(files, 'folder', _filesFolder);
+}
+
+function downloadFilesResults() {
+  const q = _filesFolder ? `?folder=${encodeURIComponent(_filesFolder)}` : '';
+  window.location.href = `/api/results/download${q}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,6 +1419,9 @@ function downloadFolderResults() {
 function downloadResults() {
   window.location.href = '/api/results/download';
 }
+
+// Keep old name as alias so any remaining references still work
+function downloadFolderResults() { downloadFilesResults(); }
 
 // ---------------------------------------------------------------------------
 // Utilities

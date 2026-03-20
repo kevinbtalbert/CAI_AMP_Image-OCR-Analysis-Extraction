@@ -850,7 +850,9 @@ def list_folders() -> list[dict]:
         if d.is_dir() and d.name not in _RESERVED_DIRS and not d.name.startswith("."):
             count = sum(1 for f in d.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS)
             size  = sum(f.stat().st_size for f in d.iterdir() if f.is_file())
-            folders.append({"name": d.name, "count": count, "size": size})
+            results_dir = RESULTS_DIR / d.name
+            result_count = len(list(results_dir.glob("OCR_*.txt"))) if results_dir.exists() else 0
+            folders.append({"name": d.name, "count": count, "size": size, "result_count": result_count})
     return folders
 
 
@@ -868,13 +870,18 @@ def folder_path(name: str) -> Path:
 # ---------------------------------------------------------------------------
 
 def save_result_txt(filename: str, use_case: str, result: str, folder: str = "") -> Path:
-    """Write a job result to RESULTS_DIR as a .txt file."""
-    stem   = Path(filename).stem
-    folder_tag = f"_{folder}" if folder else ""
-    txt_name   = f"{stem}{folder_tag}_{use_case.replace(' ', '_')[:30]}.txt"
-    out_path   = RESULTS_DIR / txt_name
+    """
+    Write a job result as  OCR_<stem>.txt.
+    Files are stored under RESULTS_DIR/<folder>/ (or RESULTS_DIR/ for root).
+    """
+    stem     = Path(filename).stem
+    txt_name = f"OCR_{stem}.txt"
+    dest_dir = (RESULTS_DIR / folder) if folder else RESULTS_DIR
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    out_path = dest_dir / txt_name
     out_path.write_text(
         f"File     : {filename}\n"
+        f"Folder   : {folder or '(root)'}\n"
         f"Use case : {use_case}\n"
         f"Date     : {datetime.utcnow().isoformat()}Z\n"
         f"{'─'*60}\n\n"
@@ -1064,12 +1071,16 @@ def delete_image(filename: str, folder: Optional[str] = Query(default="")):
 @app.get("/api/results/download")
 def download_results(folder: Optional[str] = Query(default="")):
     """
-    Download all saved .txt result files as a zip.
-    If `folder` is specified, only include results tagged for that folder.
+    Download result OCR_*.txt files as a zip.
+    If `folder` is given, only includes results from RESULTS_DIR/<folder>/.
+    Otherwise includes every result across all subdirectories.
     """
-    txt_files = list(RESULTS_DIR.glob("*.txt"))
     if folder:
-        txt_files = [f for f in txt_files if f"_{folder}_" in f.name or f.name.startswith(f"{folder}_")]
+        search_dir = RESULTS_DIR / folder
+        txt_files  = list(search_dir.glob("OCR_*.txt")) if search_dir.exists() else []
+    else:
+        # Collect from root + all subdirs
+        txt_files = list(RESULTS_DIR.glob("OCR_*.txt")) + list(RESULTS_DIR.glob("*/OCR_*.txt"))
 
     if not txt_files:
         raise HTTPException(status_code=404, detail="No results available to download.")
@@ -1077,15 +1088,28 @@ def download_results(folder: Optional[str] = Query(default="")):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in txt_files:
-            zf.write(f, f.name)
+            # Preserve folder structure inside the zip
+            arc_name = f.relative_to(RESULTS_DIR)
+            zf.write(f, arc_name)
     buf.seek(0)
 
-    zip_name = f"results{'_' + folder if folder else ''}.zip"
+    zip_name = f"results_{folder}.zip" if folder else "results_all.zip"
     return StreamingResponse(
         buf,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
     )
+
+
+@app.get("/api/folders/{name}/results")
+def api_folder_results(name: str):
+    """List OCR result filenames for a given folder (or 'root')."""
+    if name == "root":
+        files = [f.name for f in RESULTS_DIR.glob("OCR_*.txt")]
+    else:
+        d = RESULTS_DIR / name
+        files = [f.name for f in d.glob("OCR_*.txt")] if d.exists() else []
+    return {"results": files, "folder": name}
 
 
 # ── Single process ──────────────────────────────────────────────────────────
