@@ -113,11 +113,15 @@ USE_CASE_CONFIG: dict[str, dict] = {
             "exactly as it appears — every character, symbol, line break, and "
             "punctuation mark. Do not add explanations, summaries, or any text that "
             "does not physically appear in the image. Stop when you reach the last "
-            "visible character."
+            "visible character. "
+            "IMPORTANT: if any section of text is too small, blurry, or visually "
+            "complex to read with certainty (such as long base64 strings, cryptographic "
+            "hashes, or densely packed technical codes), write [illegible] in place of "
+            "that section. Never guess or reconstruct content you cannot clearly see."
         ),
         "user": "Transcribe all printed or typed text visible in this image.",
         "render": None,
-        "options": {"temperature": 0.05, "repeat_penalty": 1.4, "repeat_last_n": 128,
+        "options": {"temperature": 0.05, "repeat_penalty": 1.5, "repeat_last_n": 256,
                     "top_k": 10, "top_p": 0.5, "num_ctx": 16384},
     },
     "Transcribing Handwritten Text": {
@@ -132,7 +136,7 @@ USE_CASE_CONFIG: dict[str, dict] = {
         ),
         "user": "Transcribe all handwritten text visible in this image.",
         "render": None,
-        "options": {"temperature": 0.05, "repeat_penalty": 1.4, "repeat_last_n": 128,
+        "options": {"temperature": 0.05, "repeat_penalty": 1.5, "repeat_last_n": 256,
                     "top_k": 10, "top_p": 0.5, "num_ctx": 16384},
     },
     "Transcribing Forms": {
@@ -227,6 +231,42 @@ USE_CASE_CONFIG: dict[str, dict] = {
 
 # Flat prompt map — kept for backward-compat with batch worker
 USE_CASE_PROMPTS = {k: v["user"] for k, v in USE_CASE_CONFIG.items()}
+
+
+def _truncate_repetition(text: str, *, min_block: int = 2, max_repeats: int = 3) -> str:
+    """
+    Detect and remove repeating line-blocks that indicate the model has entered
+    a hallucination loop (e.g. the same MIME header pair repeated hundreds of times).
+
+    Strategy: slide a window of *min_block* consecutive lines and check whether
+    the same block appears more than *max_repeats* times in a row.  If so,
+    keep the first *max_repeats* occurrences and strip the rest.
+
+    This handles both short patterns (2–4 lines) and exact single-line repeats.
+    """
+    if not text:
+        return text
+
+    lines = text.splitlines()
+    n     = len(lines)
+
+    # Try block sizes from small to medium
+    for block_size in range(1, min(16, n // (max_repeats + 1) + 1)):
+        i = 0
+        while i <= n - block_size * (max_repeats + 1):
+            block = lines[i : i + block_size]
+            # Count how many consecutive times this block repeats after position i
+            count = 1
+            while i + block_size * (count + 1) <= n and \
+                  lines[i + block_size * count : i + block_size * (count + 1)] == block:
+                count += 1
+            if count > max_repeats:
+                # Keep the first max_repeats copies and truncate
+                keep_end = i + block_size * max_repeats
+                return "\n".join(lines[:keep_end]).rstrip()
+            i += 1
+
+    return text
 
 
 def _parse_structured_response(raw: str, use_case: str) -> str:
@@ -664,7 +704,9 @@ def analyze_image(image_path: Path, use_case: str, cfg: dict) -> str:
     )
     resp.raise_for_status()
     raw = resp.json().get("message", {}).get("content", "")
-    return _parse_structured_response(raw, use_case) if schema else raw
+    if schema:
+        return _parse_structured_response(raw, use_case)
+    return _truncate_repetition(raw)
 
 
 def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
@@ -689,7 +731,12 @@ def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
     schema = USE_CASE_CONFIG.get(use_case, {}).get("schema")
 
     def _stream_plain(fmt=None):
-        """Stream tokens from Ollama, optionally with a format constraint."""
+        """Stream tokens from Ollama, optionally with a format constraint.
+
+        Includes a running-buffer repetition guard: if the accumulated text
+        develops a looping line-block pattern (the same N lines repeating
+        more than 3 times) the stream is stopped early and truncated.
+        """
         payload: dict = {
             "model":    model,
             "messages": msgs,
@@ -713,14 +760,39 @@ def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
                         detail = resp.text or f"HTTP {resp.status_code}"
                     yield f"data: {json.dumps({'error': detail})}\n\n"
                     return
+
+                accumulated = ""
+                sent_chars  = 0  # how many chars of `accumulated` we've already emitted
+
                 for raw in resp.iter_lines():
                     if not raw:
                         continue
                     chunk = json.loads(raw)
                     token = chunk.get("message", {}).get("content", "")
                     if token:
-                        yield f"data: {json.dumps({'token': token})}\n\n"
+                        accumulated += token
+                        # Every ~200 accumulated chars, check for repetition
+                        if len(accumulated) - sent_chars >= 200:
+                            truncated = _truncate_repetition(accumulated)
+                            if len(truncated) < len(accumulated):
+                                # Repetition detected — emit only the new safe portion
+                                new_safe = truncated[sent_chars:]
+                                if new_safe:
+                                    yield f"data: {json.dumps({'token': new_safe})}\n\n"
+                                yield f"data: {json.dumps({'done': True})}\n\n"
+                                return
+                            # No repetition — emit the unsent portion
+                            new_part = accumulated[sent_chars:]
+                            yield f"data: {json.dumps({'token': new_part})}\n\n"
+                            sent_chars = len(accumulated)
+
                     if chunk.get("done"):
+                        # Emit any buffered remainder, apply final truncation
+                        remainder = accumulated[sent_chars:]
+                        if remainder:
+                            clean = _truncate_repetition(accumulated)[sent_chars:]
+                            if clean:
+                                yield f"data: {json.dumps({'token': clean})}\n\n"
                         yield f"data: {json.dumps({'done': True})}\n\n"
                         return
         except Exception as e:

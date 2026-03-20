@@ -173,8 +173,18 @@ async function _globalOllamaCheck() {
       if (gpuChip) gpuChip.style.display = 'flex';
       if (data.gpu_in_use) {
         setDot('dot-gpu', 'ok');
-        const vramPct = Math.round(g.memory_used_mb / g.memory_total_mb * 100);
-        if (gpuLbl) gpuLbl.textContent = `GPU · ${vramPct}% VRAM`;
+        // Always use Ollama ps size_vram as the authoritative VRAM figure
+        const modelVramMb    = (data.loaded || []).filter(m => m.size_vram > 0)
+          .reduce((s, m) => s + m.size_vram, 0) / 1048576;
+        const nvTotalReliable = g.memory_total_mb > 0 && g.memory_total_mb < 90000;
+        let gpuLabel = 'GPU · active';
+        if (modelVramMb > 0 && nvTotalReliable) {
+          const vramPct = Math.min(100, Math.round(modelVramMb / g.memory_total_mb * 100));
+          gpuLabel = `GPU · ${vramPct}% VRAM`;
+        } else if (modelVramMb > 0) {
+          gpuLabel = `GPU · ${Math.round(modelVramMb).toLocaleString()} MB`;
+        }
+        if (gpuLbl) gpuLbl.textContent = gpuLabel;
       } else if (warming) {
         setDot('dot-gpu', 'warn');
         if (gpuLbl) gpuLbl.textContent = 'GPU · loading…';
@@ -183,7 +193,10 @@ async function _globalOllamaCheck() {
         if (gpuLbl) gpuLbl.textContent = 'GPU · ready';
       }
       const chip = document.getElementById('gpu-chip');
-      if (chip) chip.title = `${g.name} — ${g.memory_used_mb} / ${g.memory_total_mb} MB · ${g.utilization_pct}% util`;
+      const memInfo = g.memory_total_mb < 90000
+        ? `${g.memory_used_mb.toLocaleString()} / ${g.memory_total_mb.toLocaleString()} MB`
+        : 'VRAM via nvidia-smi unreliable in this environment';
+      if (chip) chip.title = `${g.name} — ${memInfo} · ${g.utilization_pct}% util`;
     } else {
       if (gpuChip) gpuChip.style.display = 'none';
     }
@@ -593,7 +606,8 @@ async function runBatch() {
 // Job polling (always-on)
 // ---------------------------------------------------------------------------
 
-let _notifiedJobIds = new Set();
+let _notifiedJobIds  = new Set();
+let _prevWasRunning  = false;   // tracks transition: running → done, to reload browser once
 
 async function pollJobs() {
   try {
@@ -612,20 +626,26 @@ async function pollJobs() {
     }
     _notifiedJobIds = nowComplete;
 
-    const running = newJobs.filter(j => j.status === 'processing' || j.status === 'queued').length;
+    const running    = newJobs.filter(j => j.status === 'processing' || j.status === 'queued').length;
+    const nowRunning = running > 0;
     setActive('batch', running);
 
     state.jobs = newJobs;
     refreshJobList();
     refreshResultsList();
     updateResultsBadge();
-    // Update Files job panel if visible
+
+    // Update Files job panel if visible — but only rebuild the file BROWSER
+    // on the one-time transition from "had running jobs" → "all done".
+    // Calling _loadFilesBrowser() every poll causes the icon-flashing.
     if (document.getElementById('files-jobs-panel')?.style.display !== 'none') {
       _refreshFilesJobList();
-      // When jobs finish, reload the file browser to update OCR badges
-      const hadRunning = running > 0;
-      if (!hadRunning && _notifiedJobIds.size > 0) _loadFilesBrowser();
     }
+    if (_prevWasRunning && !nowRunning) {
+      // Jobs just finished — refresh the file browser once to update OCR badges
+      _loadFilesBrowser();
+    }
+    _prevWasRunning = nowRunning;
   } catch (_) {}
 }
 
@@ -1000,14 +1020,41 @@ function renderGpuStatus(data) {
   if (cards) {
     const loaded = data.loaded || [];
     cards.innerHTML = gpu.gpus.map((g, i) => {
-      const vramPct    = Math.round(g.memory_used_mb / g.memory_total_mb * 100);
       const activeClass = data.gpu_in_use ? 'active' : 'ready';
 
-      // Find if any model is loaded on this GPU and show its VRAM allocation
-      const modelVram = loaded
-        .filter(m => m.size_vram > 0)
+      // Ollama ps is the authoritative source for VRAM actually in use by the model
+      const modelEntries   = loaded.filter(m => m.size_vram > 0);
+      const modelVramBytes = modelEntries.reduce((s, m) => s + m.size_vram, 0);
+      const modelVramMb    = Math.round(modelVramBytes / 1048576);
+      const modelVramLabel = modelEntries
         .map(m => `${escHtml(m.name)} (${(m.size_vram / 1073741824).toFixed(1)} GB)`)
         .join(', ');
+
+      // nvidia-smi memory.total can report host RAM in some CML/Kubernetes environments
+      // (e.g. an L4 showing 130 GB instead of its actual 24 GB).
+      // Only use it for a capacity denominator when it looks plausible (< 90 GB).
+      const nvTotalMb       = g.memory_total_mb;
+      const nvTotalReliable = nvTotalMb > 0 && nvTotalMb < 90000;
+
+      // Build bar and label — Ollama ps VRAM is always the "used" value
+      let vramPct, barLabel;
+      if (modelVramMb > 0 && nvTotalReliable) {
+        vramPct  = Math.min(100, Math.round(modelVramMb / nvTotalMb * 100));
+        barLabel = `${modelVramMb.toLocaleString()} / ${nvTotalMb.toLocaleString()} MB`;
+      } else if (modelVramMb > 0) {
+        vramPct  = null;
+        barLabel = `${modelVramMb.toLocaleString()} MB in VRAM`;
+      } else if (nvTotalReliable) {
+        vramPct  = 0;
+        barLabel = `0 / ${nvTotalMb.toLocaleString()} MB`;
+      } else {
+        vramPct  = 0;
+        barLabel = 'Model not yet loaded';
+      }
+
+      const barHtml = vramPct !== null
+        ? `<div class="gpu-vram-bar"><div class="gpu-vram-fill" style="width:${vramPct}%"></div></div>`
+        : `<div class="gpu-vram-bar"><div class="gpu-vram-fill" style="width:100%;opacity:0.45;background:var(--cldr-teal)"></div></div>`;
 
       return `<div class="gpu-card ${activeClass}">
         <div class="gpu-card-icon">GPU${i}</div>
@@ -1016,16 +1063,14 @@ function renderGpuStatus(data) {
           <div class="gpu-card-meta">
             Driver ${escHtml(g.driver_version)} ·
             ${g.utilization_pct}% util
-            ${modelVram
-              ? `· <strong style="color:var(--cldr-teal)">${modelVram} in VRAM</strong>`
+            ${modelVramLabel
+              ? `· <strong style="color:var(--cldr-teal)">${modelVramLabel} in VRAM</strong>`
               : `· <span style="color:var(--tx-3);font-style:italic">Model loads into VRAM on first inference</span>`}
           </div>
         </div>
         <div class="gpu-vram-bar-wrap">
-          <div class="gpu-vram-bar">
-            <div class="gpu-vram-fill" style="width:${vramPct}%"></div>
-          </div>
-          <span class="gpu-vram-label">${g.memory_used_mb.toLocaleString()} / ${g.memory_total_mb.toLocaleString()} MB</span>
+          ${barHtml}
+          <span class="gpu-vram-label">${barLabel}</span>
         </div>
       </div>`;
     }).join('');
