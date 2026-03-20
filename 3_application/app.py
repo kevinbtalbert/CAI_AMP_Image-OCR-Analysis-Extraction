@@ -57,6 +57,7 @@ LOCAL_MODEL_DEFAULT = "qwen2.5vl:7b"
 OLLAMA_BASE_URL     = "http://localhost:11434"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+PDF_EXTENSIONS   = {".pdf"}
 
 USE_CASES = [
     "Transcribing Typed Text",
@@ -1236,26 +1237,72 @@ def get_images():
     }
 
 
+def _pdf_to_images(pdf_bytes: bytes, stem: str, dest_dir: Path, dpi: int = 200) -> list[str]:
+    """
+    Render each page of a PDF to a JPEG and save in dest_dir.
+    Returns a list of saved filenames (relative, e.g. ["report_page_001.jpg", ...]).
+    Requires PyMuPDF (import fitz).
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="PyMuPDF is not installed. Run the session install-dependencies step.",
+        )
+
+    saved = []
+    doc   = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pad   = len(str(len(doc)))  # zero-pad width based on page count
+    mat   = fitz.Matrix(dpi / 72, dpi / 72)
+
+    for i, page in enumerate(doc, start=1):
+        pix  = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)
+        name = f"{stem}_page_{str(i).zfill(pad)}.jpg"
+        path = dest_dir / name
+        img  = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        img.save(path, "JPEG", quality=92)
+        saved.append(name)
+
+    doc.close()
+    return saved
+
+
 @app.post("/api/images/upload")
 async def upload_images(
     files: list[UploadFile] = File(...),
     folder: Optional[str]   = Query(default=""),
 ):
-    """Upload images. If `folder` is provided, place files in that sub-folder."""
+    """
+    Upload images or PDFs.
+    PDFs are split into per-page JPEG files and stored alongside normal images.
+    Returns a `pdf_pages` dict mapping original PDF name → list of page image names.
+    """
     if folder:
         dest_dir = folder_path(folder)
         dest_dir.mkdir(parents=True, exist_ok=True)
     else:
         dest_dir = DATA_DIR
 
-    saved = []
+    saved     = []
+    pdf_pages = {}   # {original_pdf_name: [page_img_name, ...]}
+
     for file in files:
-        if Path(file.filename).suffix.lower() not in IMAGE_EXTENSIONS:
-            continue
-        dest = dest_dir / Path(file.filename).name
-        dest.write_bytes(await file.read())
-        saved.append(file.filename)
-    return {"saved": saved, "folder": folder}
+        ext  = Path(file.filename).suffix.lower()
+        data = await file.read()
+
+        if ext in PDF_EXTENSIONS:
+            stem  = Path(file.filename).stem
+            pages = _pdf_to_images(data, stem, dest_dir)
+            saved.extend(pages)
+            pdf_pages[file.filename] = pages
+
+        elif ext in IMAGE_EXTENSIONS:
+            dest = dest_dir / Path(file.filename).name
+            dest.write_bytes(data)
+            saved.append(file.filename)
+
+    return {"saved": saved, "folder": folder, "pdf_pages": pdf_pages}
 
 
 @app.delete("/api/images/{filename}")
@@ -1302,6 +1349,87 @@ def download_results(folder: Optional[str] = Query(default="")):
     )
 
 
+@app.get("/api/results/export-csv")
+def export_results_csv(folder: Optional[str] = Query(default="")):
+    """
+    Export all OCR results as a CSV file.
+
+    Each row = one document.  Columns:
+      file, folder, use_case, date, text / JSON fields (flattened).
+
+    For results whose body is valid JSON, each top-level key becomes a
+    column.  For plain-text results, the content goes into a `text` column.
+    All files are merged into a single CSV; missing keys are left blank.
+    """
+    import csv as _csv
+
+    if folder:
+        txt_files = list((RESULTS_DIR / folder).glob("OCR_*.txt")) if (RESULTS_DIR / folder).exists() else []
+    else:
+        txt_files = list(RESULTS_DIR.glob("OCR_*.txt")) + list(RESULTS_DIR.glob("*/OCR_*.txt"))
+
+    if not txt_files:
+        raise HTTPException(status_code=404, detail="No results to export.")
+
+    rows = []
+    all_json_keys: list[str] = []
+
+    for path in txt_files:
+        try:
+            raw    = path.read_text(encoding="utf-8", errors="replace")
+            lines  = raw.splitlines()
+            sep_i  = next((i for i, l in enumerate(lines) if l.startswith("─")), None)
+            header = {l.split(":", 1)[0].strip().lower(): l.split(":", 1)[1].strip()
+                      for l in lines[:sep_i or 6] if ":" in l}
+            body   = "\n".join(lines[sep_i + 1:]).strip() if sep_i is not None else raw.strip()
+        except Exception:
+            continue
+
+        rel    = path.relative_to(RESULTS_DIR)
+        row    = {
+            "file":     header.get("file", path.stem[4:]),   # strip OCR_ prefix
+            "folder":   rel.parent.name if rel.parent != Path(".") else "",
+            "use_case": header.get("use case", ""),
+            "date":     header.get("date", ""),
+        }
+
+        # Try to parse JSON body — if it succeeds, flatten top-level keys
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict):
+                for k, v in parsed.items():
+                    col = str(k).lower().replace(" ", "_")
+                    row[col] = json.dumps(v) if isinstance(v, (dict, list)) else str(v)
+                    if col not in all_json_keys:
+                        all_json_keys.append(col)
+            else:
+                row["text"] = body
+        except (json.JSONDecodeError, TypeError):
+            row["text"] = body
+
+        rows.append(row)
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No results to export.")
+
+    # Build a stable, ordered set of columns
+    base_cols  = ["file", "folder", "use_case", "date"]
+    extra_cols = all_json_keys + (["text"] if any("text" in r for r in rows) else [])
+    fieldnames = base_cols + [c for c in extra_cols if c not in base_cols]
+
+    buf = io.StringIO()
+    writer = _csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+
+    csv_name = f"results_{folder}.csv" if folder else "results_all.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{csv_name}"'},
+    )
+
+
 @app.get("/api/folders/{name}/results")
 def api_folder_results(name: str):
     """List OCR result filenames for a given folder (or 'root')."""
@@ -1319,8 +1447,7 @@ def api_result_read(filename: str, folder: str = ""):
     Return the text content of a single OCR result file.
 
     Query params:
-      filename  – the image filename (e.g. 'photo.png'); the endpoint
-                  resolves to OCR_<stem>.txt automatically.
+      filename  – the image filename (e.g. 'photo.png'); resolves to OCR_<stem>.txt
       folder    – optional folder name; empty string means root.
     """
     stem     = Path(filename).stem
@@ -1329,6 +1456,91 @@ def api_result_read(filename: str, folder: str = ""):
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"No result found for {filename}")
     return {"filename": filename, "folder": folder, "content": path.read_text(encoding="utf-8")}
+
+
+class SaveResultBody(BaseModel):
+    filename: str
+    folder:   str = ""
+    content:  str
+
+
+@app.put("/api/results/save")
+def api_result_save(body: SaveResultBody):
+    """Overwrite the body of an OCR result file (user-edited correction)."""
+    stem     = Path(body.filename).stem
+    txt_name = f"OCR_{stem}.txt"
+    path     = (RESULTS_DIR / body.folder / txt_name) if body.folder else (RESULTS_DIR / txt_name)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"No result found for {body.filename}")
+    # Preserve the header block (everything up to and including the separator line),
+    # then replace the body with the user's edited text.
+    old_lines = path.read_text(encoding="utf-8").splitlines()
+    sep_idx   = next((i for i, l in enumerate(old_lines) if l.startswith("─")), None)
+    if sep_idx is not None:
+        header = "\n".join(old_lines[: sep_idx + 1])
+        new_content = header + "\n" + body.content.strip() + "\n"
+    else:
+        new_content = body.content
+    path.write_text(new_content, encoding="utf-8")
+    return {"ok": True}
+
+
+@app.get("/api/results/search")
+def api_results_search(q: str = Query(..., min_length=1)):
+    """
+    Full-text search across all OCR_*.txt result files.
+    Returns up to 50 matches with a 160-char snippet around each hit.
+    """
+    if not q:
+        return {"matches": []}
+
+    q_lower  = q.lower()
+    matches  = []
+    txt_files = list(RESULTS_DIR.glob("OCR_*.txt")) + list(RESULTS_DIR.glob("*/OCR_*.txt"))
+
+    for path in txt_files:
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+
+        # Find the body (after the separator line)
+        lines   = content.splitlines()
+        sep_idx = next((i for i, l in enumerate(lines) if l.startswith("─")), None)
+        body    = "\n".join(lines[sep_idx + 1:]) if sep_idx is not None else content
+
+        idx = body.lower().find(q_lower)
+        if idx == -1:
+            continue
+
+        # Build a readable snippet around the match
+        start   = max(0, idx - 80)
+        end     = min(len(body), idx + len(q) + 80)
+        snippet = ("…" if start > 0 else "") + body[start:end] + ("…" if end < len(body) else "")
+
+        # Resolve folder from path structure
+        rel = path.relative_to(RESULTS_DIR)
+        folder = rel.parent.name if rel.parent != Path(".") else ""
+
+        # Extract original image filename from the header if present
+        img_filename = path.stem[4:]  # strip "OCR_" prefix, gives stem
+        for line in lines[:6]:
+            if line.startswith("File:"):
+                img_filename = line.split(":", 1)[1].strip()
+                break
+
+        matches.append({
+            "txt_name":     path.name,
+            "img_filename": img_filename,
+            "folder":       folder,
+            "snippet":      snippet,
+            "match_start":  idx - start,   # offset within snippet where match begins
+            "match_len":    len(q),
+        })
+        if len(matches) >= 50:
+            break
+
+    return {"matches": matches, "query": q}
 
 
 # ── Single process ──────────────────────────────────────────────────────────

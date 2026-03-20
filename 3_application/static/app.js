@@ -55,6 +55,7 @@ function _updateGlobalProgress() {
 const PAGE_TITLES = {
   analysis: 'Image Analysis',
   results:  'Results',
+  search:   'Search',
   files:    'Files',
   config:   'Configuration',
 };
@@ -66,17 +67,34 @@ const USE_CASE_HINTS = {
   'Complicated Document QA':        'Ask a specific question and receive an answer grounded in the document content.',
   'Unstructured Information → JSON':'Converts document content into structured, machine-readable JSON.',
   'Summarize Image':                'Describes and summarises the image — what it shows, its purpose, and key takeaways. Not a verbatim transcription.',
+  'tpl:invoice':      '📄 Extracts vendor, invoice number, date, line items, subtotal, tax, and total amount.',
+  'tpl:receipt':      '🧾 Extracts merchant name, date, itemised purchases, subtotals, tax, and payment method.',
+  'tpl:business_card':'👤 Extracts name, title, company, email, phone, address, and website.',
+  'tpl:purchase_order':'📦 Extracts PO number, vendor, buyer, ordered items, quantities, unit prices, and totals.',
+  'tpl:medical_form': '🏥 Extracts patient name, DOB, provider, visit date, chief complaint, and notes.',
+  'tpl:id_document':  '🪪 Extracts full name, date of birth, document number, issue date, and expiry date.',
+};
+
+// Template → use case mapping for backend
+const TEMPLATE_USE_CASE = {
+  'tpl:invoice':       'Unstructured Information → JSON',
+  'tpl:receipt':       'Unstructured Information → JSON',
+  'tpl:business_card': 'Unstructured Information → JSON',
+  'tpl:purchase_order':'Unstructured Information → JSON',
+  'tpl:medical_form':  'Transcribing Forms',
+  'tpl:id_document':   'Transcribing Forms',
 };
 
 function navigate(section) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById(`section-${section}`).classList.add('active');
-  document.querySelector(`[data-section="${section}"]`).classList.add('active');
-  document.getElementById('page-title').textContent = PAGE_TITLES[section];
+  document.querySelector(`[data-section="${section}"]`)?.classList.add('active');
+  document.getElementById('page-title').textContent = PAGE_TITLES[section] || section;
 
   if (section === 'analysis') refreshSingleImageSelect();
   if (section === 'results')  refreshResultsList();
+  if (section === 'search')   document.getElementById('search-input')?.focus();
   if (section === 'files')    loadFilesSection();
   if (section === 'config')   loadConfigForm();
 }
@@ -281,11 +299,12 @@ function formatBytes(b) {
 function onSingleUseCaseChange() {
   const uc = document.getElementById('single-use-case').value;
   document.getElementById('single-use-case-hint').textContent = USE_CASE_HINTS[uc] || '';
-  document.getElementById('single-question-group').style.display =
-    uc === 'Complicated Document QA' ? 'block' : 'none';
+  const isQA = uc === 'Complicated Document QA';
+  document.getElementById('single-question-group').style.display = isQA ? 'flex' : 'none';
 }
 
 function onSingleSrcChange() { refreshSingleImageSelect(); }
+function onSingleImageChange() { updateSinglePreview(); }
 
 function refreshSingleImageSelect() {
   const src    = document.querySelector('input[name="single-src"]:checked')?.value || 'uploads';
@@ -298,22 +317,57 @@ function refreshSingleImageSelect() {
 }
 
 function updateSinglePreview() {
-  const src  = document.querySelector('input[name="single-src"]:checked')?.value || 'uploads';
-  const name = document.getElementById('single-image-select').value;
-  const wrap = document.getElementById('single-preview-wrap');
-  const img  = document.getElementById('single-preview');
-  if (!name) { wrap.style.display = 'none'; return; }
-  wrap.style.display = 'block';
-  img.src = src === 'examples' ? `/examples/${name}` : `/images/${name}`;
+  const src     = document.querySelector('input[name="single-src"]:checked')?.value || 'uploads';
+  const name    = document.getElementById('single-image-select').value;
+  const imgEl   = document.getElementById('single-preview');
+  const empty   = document.getElementById('analysis-img-empty');
+  const metaEl  = document.getElementById('analysis-img-meta');
+  if (!name) {
+    if (imgEl)  { imgEl.style.display = 'none'; }
+    if (empty)  { empty.style.display = 'flex'; }
+    if (metaEl) { metaEl.textContent = ''; }
+    return;
+  }
+  const imgSrc = src === 'examples' ? `/examples/${encodeURIComponent(name)}` : `/images/${encodeURIComponent(name)}`;
+  if (imgEl) { imgEl.src = imgSrc; imgEl.style.display = 'block'; }
+  if (empty)  { empty.style.display = 'none'; }
+  if (metaEl) { metaEl.textContent = name; }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   const sel = document.getElementById('single-image-select');
   if (sel) sel.addEventListener('change', updateSinglePreview);
-  const batchUC = document.getElementById('batch-use-case');
-  if (batchUC) batchUC.addEventListener('change', () => {
-    document.getElementById('batch-question-group').style.display =
-      batchUC.value === 'Complicated Document QA' ? 'block' : 'none';
+
+  // ── Clipboard paste ─────────────────────────────────────────────────────
+  document.addEventListener('paste', async (e) => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const imgItem = items.find(it => it.type.startsWith('image/'));
+    if (!imgItem) return;
+    e.preventDefault();
+    const file = imgItem.getAsFile();
+    if (!file) return;
+    const ext  = file.type.split('/')[1] || 'png';
+    const name = `paste_${Date.now()}.${ext}`;
+    const renamed = new File([file], name, { type: file.type });
+    toast('Image pasted — uploading…', 'info', 2000);
+    const fd = new FormData();
+    fd.append('files', renamed);
+    try {
+      await fetch('/api/images/upload', { method: 'POST', body: fd });
+      await refreshImages();
+      // Switch single-src to uploads and select the pasted image
+      const uploadRadio = document.querySelector('input[name="single-src"][value="uploads"]');
+      if (uploadRadio) { uploadRadio.checked = true; }
+      await refreshSingleImageSelect();
+      const sel = document.getElementById('single-image-select');
+      if (sel) {
+        const opt = Array.from(sel.options).find(o => o.value === name);
+        if (opt) { sel.value = name; updateSinglePreview(); }
+      }
+      toast('Pasted image ready', 'success');
+    } catch (err) {
+      toast('Paste upload failed: ' + err.message, 'error');
+    }
   });
 });
 
@@ -367,31 +421,41 @@ function _setSingleProcessing(active) {
   }
 }
 
+// Current single-process state: filename and folder for result editing
+let _singleResultFilename = '';
+let _singleResultFolder   = '';
+
 async function runSingleProcess() {
-  const uc       = document.getElementById('single-use-case').value;
+  const ucRaw    = document.getElementById('single-use-case').value;
+  const uc       = TEMPLATE_USE_CASE[ucRaw] || ucRaw;  // resolve template → use case
   const question = document.getElementById('single-question')?.value || '';
   const src      = document.querySelector('input[name="single-src"]:checked')?.value || 'uploads';
   const filename = document.getElementById('single-image-select').value;
 
   if (!filename) { toast('Please select an image.', 'error'); return; }
 
-  const resultBody = document.getElementById('single-result-body');
-  _singleAbort     = new AbortController();
+  _singleResultFilename = filename;
+  _singleResultFolder   = '';   // single-process always saves to root
+
+  const resultPre   = document.getElementById('single-result');
+  const resultEmpty = document.getElementById('single-result-empty');
+  const streamInd   = document.getElementById('single-stream-indicator');
+  const editBtn     = document.getElementById('single-edit-btn');
+  const copyBtn     = document.getElementById('single-copy-btn');
+
+  // Switch to streaming state
+  if (resultEmpty)  resultEmpty.style.display = 'none';
+  if (resultPre)    { resultPre.textContent = ''; resultPre.style.display = 'block'; }
+  if (streamInd)    streamInd.style.display = 'inline-flex';
+  if (editBtn)      editBtn.style.display = 'none';
+  if (copyBtn)      copyBtn.style.display = 'none';
+  cancelResultEdit();
+
+  _singleAbort = new AbortController();
   _setSingleProcessing(true);
   setActive('processing', true);
 
-  // Show a live-updating <pre> immediately so the user sees output as it arrives
-  resultBody.innerHTML = `
-    <div class="result-section-label">Analysis Result
-      <span class="stream-indicator" id="stream-indicator">
-        <span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span> generating…
-      </span>
-    </div>
-    <pre class="result-pre stream-result" id="stream-result"></pre>`;
-
-  const pre = document.getElementById('stream-result');
   let fullText = '';
-  let errored  = false;
 
   try {
     const resp = await fetch('/api/process/stream', {
@@ -414,11 +478,8 @@ async function runSingleProcess() {
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-
-      // SSE lines are separated by \n\n; process any complete events
       const parts = buf.split('\n\n');
-      buf = parts.pop();   // keep the incomplete tail
-
+      buf = parts.pop();
       for (const part of parts) {
         for (const line of part.split('\n')) {
           if (!line.startsWith('data: ')) continue;
@@ -426,34 +487,25 @@ async function runSingleProcess() {
           if (data.error) { throw new Error(data.error); }
           if (data.token) {
             fullText += data.token;
-            pre.textContent = fullText;
+            if (resultPre) resultPre.textContent = fullText;
           }
         }
       }
     }
 
-    // Hide the "generating…" indicator
-    const ind = document.getElementById('stream-indicator');
-    if (ind) ind.style.display = 'none';
-
+    if (streamInd) streamInd.style.display = 'none';
     if (fullText) {
-      const copyBtn = document.getElementById('single-copy-btn');
-      copyBtn.style.display = 'inline-flex';
-      copyBtn.dataset.text  = fullText;
+      if (copyBtn) { copyBtn.style.display = 'inline-flex'; copyBtn.dataset.text = fullText; }
+      if (editBtn) editBtn.style.display = 'inline-flex';
       toast('Analysis complete', 'success');
     }
 
   } catch (e) {
-    errored = true;
+    if (streamInd) streamInd.style.display = 'none';
     if (e.name === 'AbortError') {
-      const ind = document.getElementById('stream-indicator');
-      if (ind) ind.innerHTML = '<span style="color:var(--tx-3)">stopped</span>';
-      if (!fullText) {
-        resultBody.innerHTML = `<div class="empty-state"><p style="color:var(--tx-3)">Processing stopped.</p></div>`;
-      }
       toast('Processing stopped', 'info');
     } else {
-      resultBody.innerHTML = `<div class="empty-state"><p style="color:var(--red)">Error: ${escHtml(e.message)}</p></div>`;
+      if (resultPre) resultPre.textContent = `Error: ${e.message}`;
       toast(e.message, 'error');
     }
   } finally {
@@ -466,17 +518,185 @@ function stopSingleProcess() {
   if (_singleAbort) _singleAbort.abort();
 }
 
-function renderSingleResult(result) {
-  const body = document.getElementById('single-result-body');
-  body.innerHTML = `
-    <div class="result-section-label">Analysis Result</div>
-    <pre class="result-pre">${escHtml(result.result)}</pre>`;
-}
-
 function copyResult() {
-  const text = document.getElementById('single-copy-btn').dataset.text || '';
+  const text = document.getElementById('single-copy-btn').dataset.text
+            || document.getElementById('single-result')?.textContent || '';
   navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard', 'success'));
 }
+
+// ---------------------------------------------------------------------------
+// Result editing (Analysis + Files modal)
+// ---------------------------------------------------------------------------
+
+function toggleResultEdit() {
+  const pre      = document.getElementById('single-result');
+  const textarea = document.getElementById('single-result-edit');
+  const actions  = document.getElementById('single-result-edit-actions');
+  const editBtn  = document.getElementById('single-edit-btn');
+  if (!pre || !textarea) return;
+  const editing = textarea.style.display !== 'none';
+  if (editing) {
+    cancelResultEdit();
+  } else {
+    textarea.value = pre.textContent;
+    pre.style.display = 'none';
+    textarea.style.display = 'block';
+    actions.style.display  = 'flex';
+    editBtn.textContent = 'View';
+    textarea.focus();
+  }
+}
+
+async function saveResultEdit() {
+  const textarea = document.getElementById('single-result-edit');
+  const pre      = document.getElementById('single-result');
+  if (!textarea || !_singleResultFilename) return;
+  try {
+    await api('PUT', '/api/results/save', {
+      filename: _singleResultFilename,
+      folder:   _singleResultFolder,
+      content:  textarea.value,
+    });
+    if (pre) { pre.textContent = textarea.value; }
+    document.getElementById('single-copy-btn').dataset.text = textarea.value;
+    cancelResultEdit();
+    toast('Result saved', 'success');
+  } catch (e) {
+    toast('Save failed: ' + e.message, 'error');
+  }
+}
+
+function cancelResultEdit() {
+  const pre      = document.getElementById('single-result');
+  const textarea = document.getElementById('single-result-edit');
+  const actions  = document.getElementById('single-result-edit-actions');
+  const editBtn  = document.getElementById('single-edit-btn');
+  if (textarea) textarea.style.display = 'none';
+  if (actions)  actions.style.display  = 'none';
+  if (pre && pre.textContent) pre.style.display = 'block';
+  if (editBtn)  editBtn.textContent = 'Edit';
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+let _searchDebounce = null;
+
+function onSearchInput() {
+  clearTimeout(_searchDebounce);
+  const q = document.getElementById('search-input')?.value.trim();
+  if (!q) { document.getElementById('search-results').innerHTML = ''; return; }
+  _searchDebounce = setTimeout(runSearch, 400);
+}
+
+async function runSearch() {
+  const q  = document.getElementById('search-input')?.value.trim();
+  const el = document.getElementById('search-results');
+  if (!q || !el) return;
+  el.innerHTML = `<div class="empty-state"><span class="spinner"></span><p>Searching…</p></div>`;
+  try {
+    const data = await api('GET', `/api/results/search?q=${encodeURIComponent(q)}`);
+    if (!data.matches.length) {
+      el.innerHTML = `<div class="empty-state"><p>No results found for <strong>${escHtml(q)}</strong></p></div>`;
+      return;
+    }
+    el.innerHTML = data.matches.map(m => {
+      // Highlight the match within the snippet
+      const before  = escHtml(m.snippet.slice(0, m.match_start));
+      const matched = escHtml(m.snippet.slice(m.match_start, m.match_start + m.match_len));
+      const after   = escHtml(m.snippet.slice(m.match_start + m.match_len));
+      const folder  = m.folder ? `<span class="search-match-folder">${escHtml(m.folder)}</span>` : '';
+      return `<div class="search-match-card" onclick="openSearchResult('${escAttr(m.img_filename)}','${escAttr(m.folder)}')">
+        <div class="search-match-meta">
+          <span class="search-match-file">${escHtml(m.img_filename)}</span>
+          ${folder}
+        </div>
+        <div class="search-match-snippet">${before}<mark>${matched}</mark>${after}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state"><p style="color:var(--red)">Search failed: ${escHtml(e.message)}</p></div>`;
+  }
+}
+
+async function openSearchResult(filename, folder) {
+  try {
+    const q   = `?filename=${encodeURIComponent(filename)}${folder ? '&folder=' + encodeURIComponent(folder) : ''}`;
+    const data = await api('GET', `/api/results/read${q}`);
+    const lines   = (data.content || '').split('\n');
+    const sepIdx  = lines.findIndex(l => l.startsWith('─'));
+    const body    = sepIdx >= 0 ? lines.slice(sepIdx + 1).join('\n').trimStart() : data.content;
+    document.getElementById('modal-title').textContent    = filename;
+    document.getElementById('modal-subtitle').textContent = folder ? `Folder: ${folder}` : 'All Files';
+    const imgEl = document.getElementById('modal-image');
+    if (imgEl) {
+      const src = folder
+        ? `/images/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}`
+        : `/images/${encodeURIComponent(filename)}`;
+      imgEl.src = src; imgEl.style.display = 'block';
+    }
+    document.getElementById('modal-result').textContent = body;
+    document.getElementById('result-modal').classList.add('open');
+  } catch (e) {
+    toast('Could not open result: ' + e.message, 'error');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcuts
+// ---------------------------------------------------------------------------
+
+document.addEventListener('keydown', e => {
+  // Don't fire shortcuts when typing in inputs
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+  // ? — show shortcut cheat sheet toast
+  if (e.key === '?') {
+    toast('Shortcuts: Space=select · ↑↓←→=navigate · Enter=process · Ctrl+A=select all · Escape=clear', 'info', 6000);
+    return;
+  }
+
+  // Only grid shortcuts apply when Files section is active
+  const filesActive = document.getElementById('section-files')?.classList.contains('active');
+  if (!filesActive) return;
+
+  const tiles = Array.from(document.querySelectorAll('.file-tile'));
+  if (!tiles.length) return;
+
+  const focusedTile = document.querySelector('.file-tile.kb-focus');
+  const focusedIdx  = focusedTile ? tiles.indexOf(focusedTile) : -1;
+
+  const moveFocus = (newIdx) => {
+    tiles.forEach(t => t.classList.remove('kb-focus'));
+    const t = tiles[Math.max(0, Math.min(newIdx, tiles.length - 1))];
+    t.classList.add('kb-focus');
+    t.scrollIntoView({ block: 'nearest' });
+  };
+
+  if (e.key === 'ArrowRight') { e.preventDefault(); moveFocus(focusedIdx + 1); }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); moveFocus(Math.max(0, focusedIdx - 1)); }
+  if (e.key === 'ArrowDown')  { e.preventDefault(); moveFocus(focusedIdx + 4); } // approx grid cols
+  if (e.key === 'ArrowUp')    { e.preventDefault(); moveFocus(Math.max(0, focusedIdx - 4)); }
+
+  if (e.key === ' ' && focusedTile) {
+    e.preventDefault();
+    const name = focusedTile.id.replace('tile-', '');
+    filesToggle(name);
+  }
+
+  if ((e.key === 'a' || e.key === 'A') && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    filesSelectAll();
+  }
+
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    queueFilesSelected();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // File upload (XHR with % progress)
@@ -513,12 +733,24 @@ function uploadFiles(files, progressId = 'batch', folder = '') {
     if (wrap) wrap.style.display = 'none';
     if (xhr.status < 400) {
       await refreshImages();
-      // Reload the Files browser if we're on that section
       if (document.getElementById('section-files')?.classList.contains('active')) {
         await _loadFilesTree();
         await _loadFilesBrowser();
       }
-      toast(`Uploaded ${files.length} file(s)${folder ? ` to "${folder}"` : ''}`, 'success');
+      // Show PDF page info if any PDFs were expanded
+      try {
+        const resp = JSON.parse(xhr.responseText);
+        const pdfPages = resp.pdf_pages || {};
+        const pdfNames = Object.keys(pdfPages);
+        if (pdfNames.length) {
+          const summary = pdfNames.map(n => `${n} → ${pdfPages[n].length} pages`).join(', ');
+          toast(`PDFs expanded: ${summary}`, 'success', 5000);
+        } else {
+          toast(`Uploaded ${files.length} file(s)${folder ? ` to "${folder}"` : ''}`, 'success');
+        }
+      } catch {
+        toast(`Uploaded ${files.length} file(s)${folder ? ` to "${folder}"` : ''}`, 'success');
+      }
     } else {
       toast('Upload failed', 'error');
     }
@@ -1266,6 +1498,18 @@ let _activeFolder = null;
 let _filesFolder   = null;   // null = root "All Files"; string = named folder
 let _filesSelected = new Set();
 let _filesResultSet = new Set(); // OCR_*.txt stems that have results
+// Per-file use case overrides: { filename → use_case_string }
+const _filesUseCaseOverrides = new Map();
+
+const USE_CASE_SHORT = {
+  'Transcribing Typed Text':        'Typed',
+  'Transcribing Handwritten Text':  'Handwritten',
+  'Transcribing Forms':             'Forms',
+  'Complicated Document QA':        'QA',
+  'Unstructured Information → JSON':'→ JSON',
+  'Summarize Image':                'Summarize',
+};
+const USE_CASE_LIST = Object.keys(USE_CASE_SHORT);
 
 async function loadFilesSection() {
   _filesSelected.clear();
@@ -1330,17 +1574,22 @@ async function _loadFilesBrowser() {
         const stem = fn.replace(/^OCR_/, '').replace(/\.txt$/, '');
         _filesResultSet.add(stem);
       });
-      dlBtn.style.display = (rr.results || []).length ? 'inline-flex' : 'none';
+      const hasResults = (rr.results || []).length > 0;
+      dlBtn.style.display = hasResults ? 'inline-flex' : 'none';
+      const csvBtn = document.getElementById('files-csv-btn');
+      if (csvBtn) csvBtn.style.display = hasResults ? 'inline-flex' : 'none';
     } else {
       const r = await api('GET', '/api/images');
       images = r.uploads || [];
-      // Load root results
       const rr = await api('GET', '/api/folders/root/results').catch(() => ({ results: [] }));
       (rr.results || []).forEach(fn => {
         const stem = fn.replace(/^OCR_/, '').replace(/\.txt$/, '');
         _filesResultSet.add(stem);
       });
-      dlBtn.style.display = (rr.results || []).length ? 'inline-flex' : 'none';
+      const hasResults = (rr.results || []).length > 0;
+      dlBtn.style.display = hasResults ? 'inline-flex' : 'none';
+      const csvBtn = document.getElementById('files-csv-btn');
+      if (csvBtn) csvBtn.style.display = hasResults ? 'inline-flex' : 'none';
     }
   } catch (e) {
     grid.innerHTML = `<div style="padding:20px;color:var(--red);font-size:13px">${escHtml(e.message)}</div>`;
@@ -1364,14 +1613,22 @@ async function _loadFilesBrowser() {
     : `/images/${encodeURIComponent(name)}`;
 
   grid.innerHTML = images.map(img => {
-    const sel = _filesSelected.has(img.name);
+    const sel       = _filesSelected.has(img.name);
     const hasResult = _filesResultSet.has(Path_stem(img.name));
+    const ucOverride = _filesUseCaseOverrides.get(img.name);
+    const ucLabel    = ucOverride ? USE_CASE_SHORT[ucOverride] || ucOverride : null;
+
     const ocrBadge = hasResult
       ? `<button class="file-tile-result-badge" onclick="event.stopPropagation();viewFileResult('${escAttr(img.name)}')" title="View OCR result">OCR ↗</button>`
       : '';
+    const ucBadge = ucLabel
+      ? `<button class="file-tile-uc-badge" onclick="event.stopPropagation();cycleFileUseCase('${escAttr(img.name)}')" title="Use case override (click to change)">${escHtml(ucLabel)}</button>`
+      : `<button class="file-tile-uc-badge file-tile-uc-default" onclick="event.stopPropagation();cycleFileUseCase('${escAttr(img.name)}')" title="Click to set a use case override for this file">+</button>`;
+
     return `<div class="file-tile${sel ? ' selected' : ''}" id="tile-${escAttr(img.name)}" onclick="filesToggle('${escAttr(img.name)}')">
       <div class="file-tile-cb"></div>
       ${ocrBadge}
+      ${ucBadge}
       <img src="${imgSrc(img.name)}" alt="${escAttr(img.name)}" loading="lazy"
            onclick="event.stopPropagation();openLightbox('${escAttr(imgSrc(img.name))}','${escAttr(img.name)}')"
            title="Click to enlarge" />
@@ -1493,19 +1750,60 @@ function _onFilesUseCaseChange() {
   if (qg) qg.style.display = uc === 'Complicated Document QA' ? 'block' : 'none';
 }
 
+function cycleFileUseCase(filename) {
+  const current = _filesUseCaseOverrides.get(filename);
+  const idx     = current ? USE_CASE_LIST.indexOf(current) : -1;
+  if (idx === -1 || idx === USE_CASE_LIST.length - 1) {
+    // First click: set first use case; last: clear override
+    if (idx === USE_CASE_LIST.length - 1) {
+      _filesUseCaseOverrides.delete(filename);
+    } else {
+      _filesUseCaseOverrides.set(filename, USE_CASE_LIST[0]);
+    }
+  } else {
+    _filesUseCaseOverrides.set(filename, USE_CASE_LIST[idx + 1]);
+  }
+  // Re-render just this tile
+  const tile     = document.getElementById(`tile-${filename}`);
+  if (!tile) return;
+  const ucOverride = _filesUseCaseOverrides.get(filename);
+  const ucLabel    = ucOverride ? USE_CASE_SHORT[ucOverride] || ucOverride : null;
+  const existing   = tile.querySelector('.file-tile-uc-badge');
+  if (existing) {
+    if (ucLabel) {
+      existing.className = 'file-tile-uc-badge';
+      existing.title     = 'Use case override (click to change)';
+      existing.textContent = ucLabel;
+    } else {
+      existing.className = 'file-tile-uc-badge file-tile-uc-default';
+      existing.title     = 'Click to set a use case override for this file';
+      existing.textContent = '+';
+    }
+  }
+}
+
 async function queueFilesSelected() {
-  const useCase  = document.getElementById('files-use-case')?.value || 'Summarize Image';
-  const question = document.getElementById('files-question')?.value || '';
-  const names    = [..._filesSelected];
+  const defaultUseCase = document.getElementById('files-use-case')?.value || 'Summarize Image';
+  const question       = document.getElementById('files-question')?.value || '';
+  const names          = [..._filesSelected];
   if (!names.length) return;
   try {
-    await api('POST', '/api/batch', {
-      filenames: names,
-      use_case:  useCase,
-      question,
-      folder:    _filesFolder || '',
-    });
-    toast(`Queued ${names.length} job${names.length > 1 ? 's' : ''}.`, 'success');
+    // Group files by their effective use case so we can batch each group separately
+    const groups = new Map();  // useCase → filenames[]
+    for (const name of names) {
+      const uc = _filesUseCaseOverrides.get(name) || defaultUseCase;
+      if (!groups.has(uc)) groups.set(uc, []);
+      groups.get(uc).push(name);
+    }
+    for (const [uc, filenames] of groups) {
+      await api('POST', '/api/batch', {
+        filenames,
+        use_case:  uc,
+        question,
+        folder:    _filesFolder || '',
+      });
+    }
+    toast(`Queued ${names.length} job${names.length > 1 ? 's' : ''} across ${groups.size} use case${groups.size > 1 ? 's' : ''}.`, 'success');
     hideFilesProcessBar();
     filesClearSelection();
     _showFilesJobsPanel();
@@ -1595,6 +1893,13 @@ async function viewFileResult(filename) {
 
 function downloadResults() {
   window.location.href = '/api/results/download';
+}
+
+function downloadResultsCsv(folder = '') {
+  const url = folder
+    ? `/api/results/export-csv?folder=${encodeURIComponent(folder)}`
+    : '/api/results/export-csv';
+  window.location.href = url;
 }
 
 // Keep old name as alias so any remaining references still work

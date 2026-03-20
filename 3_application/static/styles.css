@@ -1264,6 +1264,95 @@ code { font-family: "Roboto Mono", Menlo, Monaco, monospace; font-size: 13px; ba
 .files-job-status.complete   { color: var(--green); }
 .files-job-status.error      { color: var(--red); }
 
+/* ── Analysis side-by-side layout ───────────────────────────────────────── */
+.analysis-controls { margin-bottom: 12px; }
+.analysis-controls-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.analysis-ctrl-group { display: flex; flex-direction: column; min-width: 160px; flex: 1; }
+.analysis-ctrl-actions { justify-content: flex-end; flex: 0 0 auto; min-width: auto; }
+
+.analysis-split {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  height: calc(100vh - 220px);
+}
+.analysis-image-pane  { flex: 0 0 38%; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.analysis-result-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.analysis-image-body  { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; overflow: hidden; padding: 12px; }
+.analysis-preview-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius);
+  display: block;
+}
+/* Result edit area */
+.result-edit-area {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  border: 1px solid var(--cldr-blue);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--tx);
+  resize: none;
+  outline: none;
+}
+.result-edit-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+/* ── Search ──────────────────────────────────────────────────────────────── */
+.search-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  background: var(--bg);
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+.search-bar-wrap:focus-within { border-color: var(--cldr-blue); box-shadow: 0 0 0 2px rgba(0,100,200,0.12); }
+.search-icon { width: 16px; height: 16px; color: var(--tx-3); flex-shrink: 0; }
+.search-bar-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 15px;
+  color: var(--tx);
+  font-family: var(--font);
+}
+.search-results-list { display: flex; flex-direction: column; gap: 10px; }
+.search-match-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.search-match-card:hover { border-color: var(--cldr-blue); background: var(--blue-bg); }
+.search-match-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.search-match-file { font-size: 14px; font-weight: 500; color: var(--tx); }
+.search-match-folder { font-size: 12px; color: var(--tx-3); background: var(--bg-2); padding: 1px 6px; border-radius: 3px; }
+.search-match-snippet { font-size: 13px; color: var(--tx-2); font-family: var(--font-mono); line-height: 1.5; word-break: break-all; }
+.search-match-snippet mark { background: rgba(255,200,0,0.35); color: var(--tx); border-radius: 2px; padding: 0 1px; }
+
 /* ── Image Lightbox ──────────────────────────────────────────────────────── */
 .img-lightbox-backdrop {
   position: fixed;
@@ -1318,3 +1407,37 @@ code { font-family: "Roboto Mono", Menlo, Monaco, monospace; font-size: 13px; ba
 /* Make thumbnail images feel clickable */
 .file-tile img         { cursor: zoom-in; }
 .img-zoomable          { cursor: zoom-in; }
+
+/* Keyboard navigation focus ring on file tiles */
+.file-tile.kb-focus {
+  outline: 2px solid var(--cldr-blue);
+  outline-offset: 2px;
+}
+
+/* Per-file use-case override badge */
+.file-tile-uc-badge {
+  position: absolute;
+  bottom: 26px; left: 5px;
+  background: var(--cldr-blue);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+  line-height: 1.4;
+  max-width: calc(100% - 10px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-tile-uc-badge:hover { background: var(--cldr-blue-dark, #005bb5); }
+.file-tile-uc-default {
+  background: transparent;
+  border: 1px dashed var(--border-md);
+  color: var(--tx-3);
+  font-size: 11px;
+}
+.file-tile-uc-default:hover { background: var(--blue-bg); border-color: var(--cldr-blue); color: var(--cldr-blue); }

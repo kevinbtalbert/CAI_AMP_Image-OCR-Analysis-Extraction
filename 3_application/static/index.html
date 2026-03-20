@@ -41,6 +41,10 @@
         Results
         <span class="nav-badge success" id="nav-badge-results" style="display:none">0</span>
       </a>
+      <a class="nav-item" data-section="search" onclick="navigate('search')">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"/></svg>
+        Search
+      </a>
 
       <span class="nav-section-label" style="margin-top:16px">FILES</span>
       <a class="nav-item" data-section="files" onclick="navigate('files')">
@@ -105,10 +109,10 @@
 
       <!-- ── Analysis ─────────────────────────────────────────────── -->
       <section id="section-analysis" class="section active">
-        <!-- Model warm-up banner — visible while pre-warm is in progress -->
-        <div id="model-warming-banner" style="display:none;margin-bottom:16px;background:#FFF8ED;border:1px solid #f59e0b;border-left:4px solid #f59e0b;border-radius:3px;padding:12px 16px;display:flex;align-items:center;gap:12px">
-          <svg width="18" height="18" viewBox="0 0 20 20" fill="#f59e0b" style="flex-shrink:0;animation:spin 1.4s linear infinite"><path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"/></svg>
-          <span style="font-size:14px;color:#92400e"><strong>Loading model into GPU VRAM…</strong> This takes 30–60 seconds on first start. Processing will be available once complete.</span>
+        <!-- Model warm-up banner -->
+        <div id="model-warming-banner" class="info-banner warn" style="display:none">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;animation:spin 1.4s linear infinite"><path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"/></svg>
+          <span><strong>Loading model into GPU VRAM…</strong> This takes 30–60 seconds on first start. Processing will be available once complete.</span>
         </div>
         <div class="welcome-banner" id="welcome-banner" style="display:none">
           <div>
@@ -116,84 +120,154 @@
             <div class="welcome-sub">Analyze, transcribe, and extract content from images using local AI — running entirely on-cluster.</div>
           </div>
         </div>
-        <div class="section-grid two-col">
 
-          <div class="card">
-            <div class="card-header">
-              <h2 class="card-title">Settings</h2>
-            </div>
-            <div class="card-body">
-
-              <div class="form-group">
-                <label class="form-label">Use Case</label>
-                <select id="single-use-case" class="form-select" onchange="onSingleUseCaseChange()">
-                  <option>Transcribing Typed Text</option>
-                  <option>Transcribing Handwritten Text</option>
-                  <option>Transcribing Forms</option>
-                  <option>Complicated Document QA</option>
-                  <option>Unstructured Information → JSON</option>
-                  <option>Summarize Image</option>
-                </select>
-                <p class="form-hint" id="single-use-case-hint"></p>
+        <!-- Top control bar -->
+        <div class="analysis-controls card">
+          <div class="card-body" style="padding:12px 16px">
+            <div class="analysis-controls-row">
+              <!-- Use case + template selector -->
+              <div class="analysis-ctrl-group">
+                <label class="form-label" style="margin-bottom:4px">Use Case</label>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <select id="single-use-case" class="form-select" style="flex:1" onchange="onSingleUseCaseChange()">
+                    <optgroup label="Transcription">
+                      <option>Transcribing Typed Text</option>
+                      <option>Transcribing Handwritten Text</option>
+                    </optgroup>
+                    <optgroup label="Extraction">
+                      <option>Transcribing Forms</option>
+                      <option>Unstructured Information → JSON</option>
+                    </optgroup>
+                    <optgroup label="Templates">
+                      <option value="tpl:invoice">📄 Invoice Extraction</option>
+                      <option value="tpl:receipt">🧾 Receipt Extraction</option>
+                      <option value="tpl:business_card">👤 Business Card</option>
+                      <option value="tpl:purchase_order">📦 Purchase Order</option>
+                      <option value="tpl:medical_form">🏥 Medical Intake Form</option>
+                      <option value="tpl:id_document">🪪 ID / Passport</option>
+                    </optgroup>
+                    <optgroup label="Understanding">
+                      <option>Complicated Document QA</option>
+                      <option>Summarize Image</option>
+                    </optgroup>
+                  </select>
+                </div>
+                <p class="form-hint" id="single-use-case-hint" style="margin-top:4px"></p>
               </div>
 
-              <div class="form-group" id="single-question-group" style="display:none">
-                <label class="form-label">Your Question</label>
-                <input type="text" id="single-question" class="form-input" placeholder="What question do you want answered?" />
+              <!-- QA question -->
+              <div class="analysis-ctrl-group" id="single-question-group" style="display:none">
+                <label class="form-label" style="margin-bottom:4px">Question</label>
+                <input type="text" id="single-question" class="form-input" placeholder="What would you like to know?" />
               </div>
 
-              <div class="form-group">
-                <label class="form-label">Image Source</label>
-                <div class="radio-group">
+              <!-- Image source + select -->
+              <div class="analysis-ctrl-group">
+                <label class="form-label" style="margin-bottom:4px">Image</label>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <select id="single-image-select" class="form-select" style="flex:1" onchange="onSingleImageChange()"></select>
+                  <label class="btn btn-sm btn-ghost" title="Paste from clipboard (Ctrl+V)" style="cursor:pointer;padding:6px 10px">
+                    <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path d="M5.5 3.5A1.5 1.5 0 017 2h6a1.5 1.5 0 011.5 1.5V4h.5A1.5 1.5 0 0116.5 5.5v11A1.5 1.5 0 0115 18H5a1.5 1.5 0 01-1.5-1.5v-11A1.5 1.5 0 015 4h.5V3.5zm1.5 0V4h6V3.5a.5.5 0 00-.5-.5H7a.5.5 0 00-.5.5z"/></svg>
+                    Paste
+                  </label>
+                </div>
+                <div class="radio-group" style="margin-top:6px">
                   <label class="radio-label">
-                    <input type="radio" name="single-src" value="uploads" checked onchange="onSingleSrcChange()" /> Uploaded Images
+                    <input type="radio" name="single-src" value="uploads" checked onchange="onSingleSrcChange()" /> Uploads
                   </label>
                   <label class="radio-label">
-                    <input type="radio" name="single-src" value="examples" onchange="onSingleSrcChange()" /> Example Images
+                    <input type="radio" name="single-src" value="examples" onchange="onSingleSrcChange()" /> Examples
                   </label>
                 </div>
               </div>
 
-              <div class="form-group">
-                <label class="form-label">Select Image</label>
-                <select id="single-image-select" class="form-select"></select>
-              </div>
-
-              <div id="single-preview-wrap" class="image-preview-wrap" style="display:none">
-                <img id="single-preview" class="image-preview img-zoomable" src="" alt="preview"
-                     onclick="openLightbox(this.src, document.getElementById('single-image-select').value)"
-                     title="Click to enlarge" />
-              </div>
-
-              <div class="process-btn-row" id="single-process-btn-row">
-                <button class="btn btn-primary btn-full" id="single-process-btn" onclick="runSingleProcess()">
-                  <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm6.39-2.908a.75.75 0 01.766.027l3.5 2.25a.75.75 0 010 1.262l-3.5 2.25A.75.75 0 018 12.25v-4.5a.75.75 0 01.39-.658z"/></svg>
-                  Process Image
-                </button>
-                <button class="btn btn-stop" id="single-stop-btn" onclick="stopSingleProcess()" style="display:none">
-                  <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm5-2.25A.75.75 0 017.75 7h4.5a.75.75 0 01.75.75v4.5a.75.75 0 01-.75.75h-4.5A.75.75 0 017 12.25v-4.5z"/></svg>
-                  Stop
-                </button>
+              <!-- Process / Stop -->
+              <div class="analysis-ctrl-group analysis-ctrl-actions">
+                <div class="process-btn-row" id="single-process-btn-row">
+                  <button class="btn btn-primary" id="single-process-btn" onclick="runSingleProcess()">
+                    <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm6.39-2.908a.75.75 0 01.766.027l3.5 2.25a.75.75 0 010 1.262l-3.5 2.25A.75.75 0 018 12.25v-4.5a.75.75 0 01.39-.658z"/></svg>
+                    Process Image
+                  </button>
+                  <button class="btn btn-stop" id="single-stop-btn" onclick="stopSingleProcess()" style="display:none">
+                    <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm5-2.25A.75.75 0 017.75 7h4.5a.75.75 0 01.75.75v4.5a.75.75 0 01-.75.75h-4.5A.75.75 0 017 12.25v-4.5z"/></svg>
+                    Stop
+                  </button>
+                </div>
               </div>
             </div>
           </div>
+        </div>
 
-          <div class="card">
-            <div class="card-header">
-              <h2 class="card-title">Result</h2>
-              <button class="btn btn-sm btn-ghost" id="single-copy-btn" onclick="copyResult()" style="display:none">
-                <svg viewBox="0 0 20 20" fill="currentColor"><path d="M7 3.5A1.5 1.5 0 018.5 2h3.879a1.5 1.5 0 011.06.44l3.122 3.12A1.5 1.5 0 0117 6.622V12.5a1.5 1.5 0 01-1.5 1.5h-1v-3.379a3 3 0 00-.879-2.121L10.5 5.379A3 3 0 008.379 4.5H7v-1z"/><path d="M4.5 6A1.5 1.5 0 003 7.5v9A1.5 1.5 0 004.5 18h7a1.5 1.5 0 001.5-1.5v-5.879a1.5 1.5 0 00-.44-1.06L9.44 6.439A1.5 1.5 0 008.378 6H4.5z"/></svg>
-                Copy
-              </button>
+        <!-- Side-by-side split: image left, result right -->
+        <div class="analysis-split">
+          <!-- Left: image preview -->
+          <div class="analysis-image-pane card">
+            <div class="card-header" style="padding:10px 14px">
+              <h2 class="card-title" style="font-size:13px">Preview</h2>
+              <span class="form-hint" id="analysis-img-meta" style="margin:0"></span>
             </div>
-            <div class="card-body" id="single-result-body">
-              <div class="empty-state">
+            <div class="card-body analysis-image-body" id="analysis-image-body">
+              <div class="empty-state" id="analysis-img-empty">
+                <svg viewBox="0 0 48 48" fill="none"><rect x="6" y="10" width="36" height="28" rx="3" stroke="#DDE3EB" stroke-width="2"/><path d="M6 32l9-8 7 7 5-5 9 9" stroke="#DDE3EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16" cy="20" r="3" stroke="#DDE3EB" stroke-width="2"/></svg>
+                <p>Select an image above</p>
+              </div>
+              <img id="single-preview" class="analysis-preview-img img-zoomable" src="" alt="preview" style="display:none"
+                   onclick="openLightbox(this.src, document.getElementById('single-image-select').value)"
+                   title="Click to enlarge" />
+            </div>
+          </div>
+
+          <!-- Right: result -->
+          <div class="analysis-result-pane card">
+            <div class="card-header" style="padding:10px 14px">
+              <h2 class="card-title" style="font-size:13px">
+                Result
+                <span class="stream-indicator" id="single-stream-indicator" style="display:none">
+                  <span class="stream-dot"></span> Streaming…
+                </span>
+              </h2>
+              <div style="display:flex;gap:6px">
+                <button class="btn btn-sm btn-ghost" id="single-edit-btn" onclick="toggleResultEdit()" style="display:none" title="Edit result">
+                  <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13"><path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z"/></svg>
+                  Edit
+                </button>
+                <button class="btn btn-sm btn-ghost" id="single-copy-btn" onclick="copyResult()" style="display:none">
+                  <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13"><path d="M7 3.5A1.5 1.5 0 018.5 2h3.879a1.5 1.5 0 011.06.44l3.122 3.12A1.5 1.5 0 0117 6.622V12.5a1.5 1.5 0 01-1.5 1.5h-1v-3.379a3 3 0 00-.879-2.121L10.5 5.379A3 3 0 008.379 4.5H7v-1z"/><path d="M4.5 6A1.5 1.5 0 003 7.5v9A1.5 1.5 0 004.5 18h7a1.5 1.5 0 001.5-1.5v-5.879a1.5 1.5 0 00-.44-1.06L9.44 6.439A1.5 1.5 0 008.378 6H4.5z"/></svg>
+                  Copy
+                </button>
+              </div>
+            </div>
+            <div class="card-body" id="single-result-body" style="display:flex;flex-direction:column;height:100%;min-height:0">
+              <div class="empty-state" id="single-result-empty">
                 <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#DDE3EB" stroke-width="2"/><path d="M16 24h16M24 16v16" stroke="#DDE3EB" stroke-width="2" stroke-linecap="round"/></svg>
                 <p>Select an image and use case, then click <strong>Process Image</strong></p>
               </div>
+              <pre class="result-pre" id="single-result" style="display:none;flex:1;min-height:0;overflow-y:auto"></pre>
+              <textarea class="result-edit-area" id="single-result-edit" style="display:none" placeholder="Edit result here…"></textarea>
+              <div class="result-edit-actions" id="single-result-edit-actions" style="display:none">
+                <button class="btn btn-sm btn-primary" onclick="saveResultEdit()">Save</button>
+                <button class="btn btn-sm btn-ghost" onclick="cancelResultEdit()">Cancel</button>
+              </div>
             </div>
           </div>
+        </div>
+      </section>
 
+      <!-- ── Search ────────────────────────────────────────────────── -->
+      <section id="section-search" class="section">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Search Results</h2>
+          </div>
+          <div class="card-body">
+            <div class="search-bar-wrap">
+              <svg class="search-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"/></svg>
+              <input id="search-input" class="search-bar-input" type="text" placeholder="Search all processed documents…"
+                     oninput="onSearchInput()" onkeydown="if(event.key==='Enter')runSearch()" />
+              <button class="btn btn-primary btn-sm" onclick="runSearch()">Search</button>
+            </div>
+            <div id="search-results" class="search-results-list"></div>
+          </div>
         </div>
       </section>
 
@@ -244,9 +318,9 @@
                  onclick="document.getElementById('batch-file-input').click()">
               <svg viewBox="0 0 48 48" fill="none"><path d="M24 8v24M12 20l12-12 12 12" stroke="#6B7C93" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="6" y="36" width="36" height="4" rx="2" fill="#DDE3EB"/></svg>
               <p>Drop images here or <strong>click to upload</strong></p>
-              <span class="upload-hint">PNG, JPG, JPEG, GIF, WEBP</span>
+              <span class="upload-hint">PNG, JPG, JPEG, GIF, WEBP, PDF (auto-split to pages)</span>
             </div>
-            <input type="file" id="batch-file-input" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="onBatchFileInput(event)" />
+            <input type="file" id="batch-file-input" multiple accept=".png,.jpg,.jpeg,.gif,.webp,.pdf" style="display:none" onchange="onBatchFileInput(event)" />
             <div class="upload-progress-wrap" id="batch-upload-progress" style="display:none">
               <svg viewBox="0 0 20 20" fill="currentColor" style="width:14px;height:14px;color:var(--cldr-blue);flex-shrink:0"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
               <span class="upload-progress-label" id="batch-upload-label">Uploading…</span>
@@ -277,9 +351,13 @@
           <div class="card-header">
             <h2 class="card-title">Completed Results</h2>
             <div class="card-actions">
+              <button class="btn btn-sm btn-ghost" onclick="downloadResultsCsv()">
+                <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+                Export CSV
+              </button>
               <button class="btn btn-sm btn-primary" id="download-results-btn" onclick="downloadResults()">
-                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
-                Download All (.zip)
+                <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+                Download ZIP
               </button>
               <button class="btn btn-sm btn-ghost" onclick="clearCompletedJobs()">Clear All</button>
             </div>
@@ -305,10 +383,14 @@
               <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" transform="scale(1,-1) translate(0,-20)"/><path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/></svg>
               Upload
             </button>
-            <input type="file" id="files-upload-input" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="onFilesUpload(event)" />
+            <input type="file" id="files-upload-input" multiple accept=".png,.jpg,.jpeg,.gif,.webp,.pdf" style="display:none" onchange="onFilesUpload(event)" />
+            <button class="btn btn-sm btn-ghost" id="files-csv-btn" onclick="downloadResultsCsv(_filesFolder||'')" style="display:none">
+              <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+              Export CSV
+            </button>
             <button class="btn btn-sm btn-ghost" id="files-download-btn" onclick="downloadFilesResults()" style="display:none">
-              <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
-              Download Results (.zip)
+              <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.59L7.3 9.24a.75.75 0 00-1.1 1.02l3.25 3.5a.75.75 0 001.1 0l3.25-3.5a.75.75 0 10-1.1-1.02l-1.95 2.1V6.75z"/></svg>
+              Download ZIP
             </button>
             <button class="btn btn-sm btn-primary" id="files-process-btn" onclick="showFilesProcessBar()" style="display:none">
               <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"/></svg>
