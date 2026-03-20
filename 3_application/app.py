@@ -1278,31 +1278,35 @@ def get_images():
 def _pdf_to_images(pdf_bytes: bytes, stem: str, dest_dir: Path, dpi: int = 200) -> list[str]:
     """
     Render each page of a PDF to a JPEG and save in dest_dir.
-    Returns a list of saved filenames (relative, e.g. ["report_page_001.jpg", ...]).
-    Requires PyMuPDF (import fitz).
+    Returns a list of saved filenames (e.g. ["report_page_001.jpg", ...]).
+
+    Uses pypdfium2 (PDFium / BSD-Apache-2.0) — no AGPL dependency.
+    PDFium is the same renderer used in Google Chrome.
     """
     try:
-        import fitz  # PyMuPDF
+        import pypdfium2 as pdfium
     except ImportError:
         raise HTTPException(
             status_code=500,
-            detail="PyMuPDF is not installed. Run the session install-dependencies step.",
+            detail="pypdfium2 is not installed. Run the session install-dependencies step.",
         )
 
-    saved = []
-    doc   = fitz.open(stream=pdf_bytes, filetype="pdf")
-    pad   = len(str(len(doc)))  # zero-pad width based on page count
-    mat   = fitz.Matrix(dpi / 72, dpi / 72)
+    saved  = []
+    doc    = pdfium.PdfDocument(pdf_bytes)
+    n      = len(doc)
+    pad    = len(str(n))
+    scale  = dpi / 72  # PDFium uses 72 DPI as its base unit
 
-    for i, page in enumerate(doc, start=1):
-        pix  = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)
-        name = f"{stem}_page_{str(i).zfill(pad)}.jpg"
-        path = dest_dir / name
-        img  = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        img.save(path, "JPEG", quality=92)
+    for i in range(n):
+        page   = doc[i]
+        bitmap = page.render(scale=scale, rotation=0)
+        pil_img = bitmap.to_pil()
+        if pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+        name = f"{stem}_page_{str(i + 1).zfill(pad)}.jpg"
+        pil_img.save(dest_dir / name, "JPEG", quality=92)
         saved.append(name)
 
-    doc.close()
     return saved
 
 
