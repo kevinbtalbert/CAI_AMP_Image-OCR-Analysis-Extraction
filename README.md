@@ -202,12 +202,6 @@ Results can be downloaded as:
 - Enlarge any thumbnail into a full-screen lightbox with a single click
 - Keyboard shortcuts: `Space` to select, arrows to navigate, `Enter` to queue, `Ctrl+A` to select all
 
-### Clipboard Paste
-Press `Ctrl+V` anywhere in the app to paste a screenshot directly from your clipboard — no need to save to disk first.
-
-### Personalization
-The UI reads CAI environment variables (`GIT_AUTHOR_NAME`, `PROJECT_OWNER`, `CDSW_PROJECT`, `CDSW_DOMAIN`) to display your name and project context.
-
 ### Configuration
 Change the active model, view live GPU status and VRAM usage (sourced from Ollama, not nvidia-smi), pull new models from the Ollama registry, and inspect the Ollama server log — all from the UI without restarting the application.
 
