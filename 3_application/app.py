@@ -632,7 +632,14 @@ def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
                 stream=True,
                 timeout=(10, 300),
             ) as resp:
-                resp.raise_for_status()
+                if not resp.ok:
+                    # Surface the actual Ollama error message, not just the HTTP status
+                    try:
+                        detail = resp.json().get("error", resp.text)
+                    except Exception:
+                        detail = resp.text or f"HTTP {resp.status_code}"
+                    yield f"data: {json.dumps({'error': detail})}\n\n"
+                    return
                 for raw in resp.iter_lines():
                     if not raw:
                         continue
@@ -670,7 +677,13 @@ def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
             json=payload,
             timeout=(10, 300),
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            try:
+                detail = resp.json().get("error", resp.text)
+            except Exception:
+                detail = resp.text or f"HTTP {resp.status_code}"
+            yield f"data: {json.dumps({'error': detail})}\n\n"
+            return
         raw    = resp.json().get("message", {}).get("content", "")
         result = _parse_structured_response(raw, use_case)
         yield f"data: {json.dumps({'token': result})}\n\n"

@@ -1,6 +1,6 @@
 /* ── Design tokens — exact Cloudera AI Workbench values ──────────────── */
 :root {
-  --sidebar-w:  180px;
+  --sidebar-w:  220px;
   --header-h:   48px;
 
   /* Sidebar — #1c2429 matches cdp-sidebar-v2 background */
@@ -93,7 +93,7 @@ svg { flex-shrink: 0; }
 }
 .brand-sub {
   color: var(--sb-label);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   letter-spacing: 0.1px;
 }
@@ -112,20 +112,20 @@ svg { flex-shrink: 0; }
   align-items: center;
   color: var(--sb-label);
   height: 32px;
-  padding-left: 16px;
-  font-size: 11px;
+  padding-left: 18px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.3px;
   margin-top: 4px;
 }
 
-/* Nav items — line-height: 36px, padding-left: 16px, color: #5A656D */
+/* Nav items — line-height: 38px, padding-left: 18px, color: #5A656D */
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 16px;
-  height: 36px;
+  gap: 10px;
+  padding: 0 18px;
+  height: 38px;
   color: var(--sb-text);
   font-size: 14px;
   font-weight: 400;
@@ -172,17 +172,17 @@ svg { flex-shrink: 0; }
 .nav-dot.success { background: var(--green-bright); }
 
 .sidebar-footer {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-top: 1px solid var(--sb-border);
 }
-.model-pills { display: flex; flex-direction: column; gap: 3px; }
+.model-pills { display: flex; flex-direction: column; gap: 4px; }
 .model-pill {
-  font-size: 11px;
+  font-size: 12px;
   color: #ffffff;
   background: rgba(255,255,255,0.06);
   border: 1px solid var(--sb-border);
   border-radius: 3px;
-  padding: 3px 8px;
+  padding: 4px 10px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

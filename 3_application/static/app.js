@@ -962,12 +962,22 @@ function renderGpuStatus(data) {
 
 function renderPulledModels(models) {
   const el = document.getElementById('pulled-models-list');
+  if (!el) return;
   if (!models.length) {
-    el.innerHTML = `<p class="form-hint">No models pulled yet.</p>`;
+    el.innerHTML = `<p class="form-hint" style="margin-top:4px">No models pulled yet.</p>`;
     return;
   }
-  el.innerHTML = `<div class="result-section-label" style="margin-bottom:8px">Pulled Models</div>` +
-    models.map(m => `<div class="pulled-model-row"><span class="model-pill" style="font-size:12px">${escHtml(m)}</span></div>`).join('');
+  el.innerHTML =
+    `<div class="result-section-label" style="margin-bottom:8px">PULLED MODELS</div>` +
+    `<div style="display:flex;flex-wrap:wrap;gap:6px">` +
+    models.map(m =>
+      `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--tx);` +
+      `background:var(--blue-bg);border:1px solid var(--border-md);border-radius:4px;padding:4px 10px;font-family:inherit">` +
+      `<svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" style="color:var(--green);flex-shrink:0">` +
+      `<path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"/>` +
+      `</svg>${escHtml(m)}</span>`
+    ).join('') +
+    `</div>`;
 }
 
 async function startOllama() {
