@@ -457,6 +457,21 @@
           </div>
         </div>
 
+        <!-- Ollama Server Log -->
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header" style="cursor:pointer" onclick="toggleOllamaLog()">
+            <h2 class="card-title">Ollama Server Log</h2>
+            <span class="form-hint" id="ollama-log-toggle-hint">Show</span>
+          </div>
+          <div id="ollama-log-panel" style="display:none">
+            <div class="card-body" style="padding:12px 16px">
+              <p class="form-hint" style="margin-bottom:8px">GPU detection and runner selection from the Ollama process. If CUDA runners appear here the model will load on GPU.</p>
+              <pre id="ollama-log-pre" style="background:#0e1c26;color:#c8d3da;font-family:'Roboto Mono',monospace;font-size:12px;line-height:1.55;padding:12px;border-radius:3px;max-height:320px;overflow-y:auto;white-space:pre-wrap;word-break:break-all">Loading…</pre>
+              <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="refreshOllamaLog()">Refresh</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Save -->
         <div class="card">
           <div class="card-body" style="padding:16px 20px">

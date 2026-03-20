@@ -310,45 +310,90 @@ def _ollama_env() -> dict:
     """
     Build the environment for the Ollama subprocess.
 
-    - Prepends ~/.local/lib/ollama (bundled CUDA runners installed by setup)
-      and common CUDA library directories to LD_LIBRARY_PATH.
-    - Sets OLLAMA_RUNNERS_DIR explicitly so Ollama finds its CUDA runners
-      when installed to a non-standard prefix (~/.local/).
-    - Sets OLLAMA_NUM_GPU based on the actual GPU count from nvidia-smi.
-      Using nvidia-smi is more reliable than CUDA_VISIBLE_DEVICES because CML
-      does not always set that variable even when a GPU is allocated.
+    Newer Ollama releases (0.2+) moved CUDA runners to a 'runners/' subdir:
+        ~/.local/lib/ollama/runners/cuda_v12/libggml-cuda.so
+    Older Ollama stored them directly in lib/ollama/:
+        ~/.local/lib/ollama/cuda_v12/libggml-cuda.so
+
+    OLLAMA_RUNNERS_DIR must point to the directory that *contains* the
+    cuda_v11 / cuda_v12 subdirectories. We auto-detect which layout is present.
     """
     env = os.environ.copy()
 
-    # Bundled CUDA runners + system CUDA libraries
+    # ── Detect runners directory layout ──────────────────────────────────────
+    # Prefer the new layout (runners/ subdir); fall back to lib/ollama directly.
+    _runners_subdir = _OLLAMA_LIB_DIR / "runners"
+    if _runners_subdir.is_dir():
+        runners_dir = _runners_subdir
+    else:
+        runners_dir = _OLLAMA_LIB_DIR
+
+    env["OLLAMA_RUNNERS_DIR"] = str(runners_dir)
+
+    # Log what we find inside the runners directory for diagnostics
+    try:
+        runner_entries = sorted(runners_dir.iterdir())
+        runner_names   = [e.name for e in runner_entries] if runner_entries else []
+        has_cuda = any("cuda" in n.lower() for n in runner_names)
+    except Exception:
+        runner_names, has_cuda = [], False
+
+    # ── LD_LIBRARY_PATH — CUDA runners + system CUDA libs ────────────────────
     lib_paths = [
-        str(_OLLAMA_LIB_DIR),           # bundled runners from setup archive
+        str(runners_dir),               # runner .so files live here
+        str(_OLLAMA_LIB_DIR),           # libggml.so / libllama.so
         str(_OLLAMA_LOCAL / "lib"),
         "/usr/local/cuda/lib64",
+        "/usr/local/cuda-12/lib64",
+        "/usr/local/cuda-11/lib64",
         "/usr/lib/x86_64-linux-gnu",
     ]
-    existing = env.get("LD_LIBRARY_PATH", "")
+    existing  = env.get("LD_LIBRARY_PATH", "")
     new_paths = ":".join(p for p in lib_paths if p not in existing)
     env["LD_LIBRARY_PATH"] = f"{new_paths}:{existing}" if existing else new_paths
 
-    # Tell Ollama where to find its runners (critical for non-system installs)
-    env.setdefault("OLLAMA_RUNNERS_DIR", str(_OLLAMA_LIB_DIR))
-
-    # Tell Ollama explicitly how many GPUs to use
+    # ── GPU count and explicit CUDA device selection ──────────────────────────
     n_gpu = _count_nvidia_gpus()
     if n_gpu > 0:
         env["OLLAMA_NUM_GPU"] = str(n_gpu)
-        print(f"[ollama] nvidia-smi found {n_gpu} GPU(s) — setting OLLAMA_NUM_GPU={n_gpu}")
+        # If CUDA_VISIBLE_DEVICES is not set, default to "0" (first GPU).
+        # In some CML container configurations the runtime grants GPU access
+        # but doesn't set this variable, which can prevent CUDA init.
+        if not env.get("CUDA_VISIBLE_DEVICES"):
+            env["CUDA_VISIBLE_DEVICES"] = "0"
+        print(f"[ollama] nvidia-smi found {n_gpu} GPU(s) — OLLAMA_NUM_GPU={n_gpu}, CUDA_VISIBLE_DEVICES={env['CUDA_VISIBLE_DEVICES']}")
     else:
         print("[ollama] No GPU detected via nvidia-smi — Ollama will run on CPU")
 
-    # Log key env vars for debugging
-    cvd = env.get("CUDA_VISIBLE_DEVICES", "<not set>")
-    print(f"[ollama] CUDA_VISIBLE_DEVICES={cvd}")
-    print(f"[ollama] OLLAMA_RUNNERS_DIR={env.get('OLLAMA_RUNNERS_DIR')}")
+    # Keep VRAM reservation minimal so the model fits without unnecessary fallback
+    env.setdefault("OLLAMA_GPU_OVERHEAD", "0")
+
+    # ── Diagnostics ───────────────────────────────────────────────────────────
+    print(f"[ollama] OLLAMA_RUNNERS_DIR={env['OLLAMA_RUNNERS_DIR']}")
+    print(f"[ollama] runners/ subdir used: {runners_dir != _OLLAMA_LIB_DIR}")
+    print(f"[ollama] runner entries: {runner_names[:8]}")
+    print(f"[ollama] CUDA runners found: {has_cuda}")
     print(f"[ollama] lib/ollama exists={_OLLAMA_LIB_DIR.is_dir()}")
+    print(f"[ollama] LD_LIBRARY_PATH={env['LD_LIBRARY_PATH'][:140]}…")
 
     return env
+
+
+def ollama_stop() -> None:
+    """
+    Gracefully stop any running Ollama server so we can restart it with the
+    correct GPU environment variables.
+    """
+    try:
+        # SIGTERM the ollama process group if we can find it
+        result = subprocess.run(
+            ["pkill", "-f", "ollama serve"],
+            timeout=5, capture_output=True,
+        )
+        if result.returncode == 0:
+            import time; time.sleep(1)  # brief pause for it to stop
+    except Exception:
+        pass
 
 
 def ollama_start() -> None:
@@ -360,10 +405,18 @@ def ollama_start() -> None:
     path = env.get("PATH", "")
     if local_bin not in path.split(os.pathsep):
         env["PATH"] = local_bin + os.pathsep + path
+
+    # Write Ollama server output to a log file so GPU detection messages are
+    # visible. 'ollama serve' logs CUDA runner selection and GPU info to stderr.
+    _log_path = Path.home() / ".local" / "share" / "ollama-serve.log"
+    _log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_fh = open(_log_path, "w")  # noqa: WPS515 (intentionally left open)
+    print(f"[ollama] server logs → {_log_path}")
+
     subprocess.Popen(
         ["ollama", "serve"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_fh,
+        stderr=log_fh,
         start_new_session=True,
         env=env,
     )
@@ -528,6 +581,9 @@ def _use_case_options(use_case: str, cfg: dict) -> dict:
     so num_predict is set to -2 (fill context) unless the user has set a
     lower explicit cap via the Configuration panel.  This prevents the output
     from being truncated before the model finishes the structured field.
+
+    num_gpu is always set explicitly so inference requests force GPU usage
+    even if the Ollama server was inadvertently started without GPU env vars.
     """
     uc = USE_CASE_CONFIG.get(use_case, {})
     has_schema = bool(uc.get("schema"))
@@ -541,7 +597,11 @@ def _use_case_options(use_case: str, cfg: dict) -> dict:
     else:
         base_predict = user_max if user_max else 4096
 
-    base    = {"num_predict": base_predict}
+    # num_gpu in the Ollama request is the number of *layers* to offload to GPU,
+    # NOT the number of physical GPUs. -1 means "all layers" which is what we
+    # want. Setting it to 1 would put only 1 layer on GPU and load ~9 GB of
+    # remaining layers into CPU RAM, causing the "not enough system memory" error.
+    base    = {"num_predict": base_predict, "num_gpu": -1}
     uc_opts = uc.get("options", {})
     return {**base, **uc_opts}
 
@@ -694,21 +754,33 @@ def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
 
 def prewarm_model(model: str) -> None:
     """
-    Load the model into VRAM by sending a tiny text-only request.
+    Load the model into GPU VRAM by sending a tiny text-only request.
     Called once on startup so the first real image request doesn't pay
     the cold-load penalty (typically 5-15 s for an 8 B model).
+
+    num_gpu is passed explicitly in the request options so even if the env
+    vars were somehow missed, Ollama is still forced to use the GPU.
     """
     try:
         resp = requests.post(
             f"{OLLAMA_BASE_URL}/api/generate",
-            json={"model": model, "prompt": "hi", "stream": False,
-                  "options": {"num_predict": 1}},
-            timeout=60,
+            json={
+                "model":   model,
+                "prompt":  "hi",
+                "stream":  False,
+                # num_gpu = -1 means "all layers on GPU" in Ollama's API.
+                # Do NOT confuse with the number of physical GPUs.
+                "options": {"num_predict": 1, "num_gpu": -1},
+            },
+            timeout=120,
         )
         if resp.status_code == 200:
-            print(f"[ollama] Model '{model}' pre-warmed into VRAM.")
+            print(f"[ollama] Model '{model}' pre-warmed into GPU VRAM (num_gpu=-1 = all layers).")
         else:
-            print(f"[ollama] Pre-warm returned {resp.status_code} — model may load on first request.")
+            body = ""
+            try: body = resp.json().get("error", resp.text)
+            except Exception: body = resp.text
+            print(f"[ollama] Pre-warm returned {resp.status_code}: {body}")
     except Exception as e:
         print(f"[ollama] Pre-warm skipped: {e}")
 
@@ -932,23 +1004,40 @@ app = FastAPI(title="Cloudera Image Analysis")
 
 @app.on_event("startup")
 def _startup():
-    """Auto-start Ollama and pre-warm the configured model into VRAM."""
-    if ollama_installed() and not ollama_running():
-        print("[startup] Starting Ollama server…")
-        ollama_start()
+    """
+    Always restart Ollama with the correct GPU environment variables, then
+    pre-warm the configured model into VRAM.
 
-    # Pre-warm the model in a background thread so startup doesn't block
+    We restart unconditionally because a previous Ollama instance (e.g. from
+    the setup job or a prior app session) may have been launched without the
+    OLLAMA_NUM_GPU / LD_LIBRARY_PATH / OLLAMA_RUNNERS_DIR env vars, causing
+    the model to load on CPU RAM instead of GPU VRAM.
+    """
+    if not ollama_installed():
+        print("[startup] Ollama not installed — skipping start.")
+        return
+
+    if ollama_running():
+        print("[startup] Ollama already running — restarting with GPU env vars…")
+        ollama_stop()
+
+    print("[startup] Starting Ollama server with GPU environment…")
+    ollama_start()
+
+    # Pre-warm the model in a background thread so startup doesn't block HTTP
     def _warm():
         import time
-        # Give Ollama a moment to be ready if it just started
-        for _ in range(10):
+        # Wait for Ollama to be ready (up to 30 s)
+        for _ in range(15):
             if ollama_running():
                 break
             time.sleep(2)
-        if ollama_running():
-            model = load_config().get("local_model", LOCAL_MODEL_DEFAULT)
-            print(f"[startup] Pre-warming model '{model}'…")
-            prewarm_model(model)
+        if not ollama_running():
+            print("[startup] Ollama did not start in time — skipping pre-warm.")
+            return
+        model = load_config().get("local_model", LOCAL_MODEL_DEFAULT)
+        print(f"[startup] Pre-warming model '{model}' into GPU VRAM…")
+        prewarm_model(model)
 
     threading.Thread(target=_warm, daemon=True).start()
 
@@ -1236,14 +1325,28 @@ def get_ollama_status():
     }
 
 
+@app.get("/api/ollama/log")
+def get_ollama_log():
+    """Return the last 100 lines of the Ollama server log for diagnostics."""
+    log_path = Path.home() / ".local" / "share" / "ollama-serve.log"
+    if not log_path.exists():
+        return {"log": "(log file not found — Ollama may have been started externally)"}
+    try:
+        lines = log_path.read_text(errors="replace").splitlines()
+        return {"log": "\n".join(lines[-100:])}
+    except Exception as e:
+        return {"log": f"Error reading log: {e}"}
+
+
 @app.post("/api/ollama/start")
 def post_ollama_start():
     if not ollama_installed():
         raise HTTPException(status_code=400, detail="Ollama is not installed. Run the setup job.")
     if ollama_running():
-        return {"ok": True, "message": "Already running"}
+        # Restart to ensure GPU env vars are applied
+        ollama_stop()
     ollama_start()
-    return {"ok": True, "message": "Start requested — allow a few seconds for Ollama to come up"}
+    return {"ok": True, "message": "Ollama (re)started with GPU environment — allow a few seconds to come up"}
 
 
 @app.post("/api/ollama/pull")

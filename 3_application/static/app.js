@@ -1013,10 +1013,35 @@ async function startOllama() {
     const r = await api('POST', '/api/ollama/start');
     toast(r.message, 'success');
     setTimeout(refreshOllamaStatus, 2500);
+    // Refresh log after a short delay so GPU detection output is visible
+    setTimeout(refreshOllamaLog, 4000);
   } catch (e) {
     toast(e.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Start Ollama';
+  }
+}
+
+let _ollamaLogVisible = false;
+
+function toggleOllamaLog() {
+  const panel  = document.getElementById('ollama-log-panel');
+  const hint   = document.getElementById('ollama-log-toggle-hint');
+  _ollamaLogVisible = !_ollamaLogVisible;
+  panel.style.display = _ollamaLogVisible ? 'block' : 'none';
+  hint.textContent    = _ollamaLogVisible ? 'Hide' : 'Show';
+  if (_ollamaLogVisible) refreshOllamaLog();
+}
+
+async function refreshOllamaLog() {
+  const pre = document.getElementById('ollama-log-pre');
+  if (!pre) return;
+  try {
+    const data = await api('GET', '/api/ollama/log');
+    pre.textContent = data.log || '(empty)';
+    pre.scrollTop   = pre.scrollHeight;
+  } catch (e) {
+    pre.textContent = 'Error fetching log: ' + e.message;
   }
 }
 
