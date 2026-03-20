@@ -1215,7 +1215,45 @@ def api_delete_folder(name: str):
     if not p.exists():
         raise HTTPException(status_code=404, detail="Folder not found.")
     shutil.rmtree(p)
+    # Also remove the results sub-directory for this folder
+    rp = RESULTS_DIR / name
+    if rp.exists():
+        shutil.rmtree(rp)
     return {"ok": True}
+
+
+class RenameFolderBody(BaseModel):
+    new_name: str
+
+
+@app.put("/api/folders/{name}/rename")
+def api_rename_folder(name: str, body: RenameFolderBody):
+    """
+    Rename a folder and its associated results directory atomically.
+    OCR_*.txt files are preserved — only the containing directory is renamed.
+    """
+    new_name = body.new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="New folder name cannot be empty.")
+    if "/" in new_name or "\\" in new_name:
+        raise HTTPException(status_code=400, detail="Folder name cannot contain path separators.")
+
+    src  = folder_path(name)
+    dst  = folder_path(new_name)
+    if not src.exists():
+        raise HTTPException(status_code=404, detail=f"Folder '{name}' not found.")
+    if dst.exists():
+        raise HTTPException(status_code=409, detail=f"Folder '{new_name}' already exists.")
+
+    src.rename(dst)
+
+    # Rename the results sub-directory in the same step so OCR files stay linked
+    rsrc = RESULTS_DIR / name
+    rdst = RESULTS_DIR / new_name
+    if rsrc.exists() and not rdst.exists():
+        rsrc.rename(rdst)
+
+    return {"ok": True, "old_name": name, "new_name": new_name}
 
 
 @app.get("/api/folders/{name}/images")
@@ -1312,6 +1350,63 @@ def delete_image(filename: str, folder: Optional[str] = Query(default="")):
         raise HTTPException(status_code=404, detail="File not found")
     path.unlink()
     return {"ok": True}
+
+
+class RenameImageBody(BaseModel):
+    new_name: str
+    folder:   str = ""
+
+
+@app.put("/api/images/{filename}/rename")
+def rename_image(filename: str, body: RenameImageBody):
+    """
+    Rename an image file and, if an OCR result exists for it, rename that too.
+
+    The new filename must keep a valid image extension.
+    OCR_<old_stem>.txt → OCR_<new_stem>.txt in the same results directory.
+    """
+    new_name = body.new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="New filename cannot be empty.")
+    if "/" in new_name or "\\" in new_name:
+        raise HTTPException(status_code=400, detail="Filename cannot contain path separators.")
+
+    new_ext = Path(new_name).suffix.lower()
+    if new_ext not in IMAGE_EXTENSIONS:
+        # Preserve original extension if user omitted it
+        orig_ext = Path(filename).suffix.lower()
+        new_name = Path(new_name).stem + orig_ext
+
+    folder    = body.folder
+    img_dir   = folder_path(folder) if folder else DATA_DIR
+    src_img   = img_dir / filename
+    dst_img   = img_dir / new_name
+
+    if not src_img.exists():
+        raise HTTPException(status_code=404, detail=f"File '{filename}' not found.")
+    if dst_img.exists():
+        raise HTTPException(status_code=409, detail=f"A file named '{new_name}' already exists.")
+
+    src_img.rename(dst_img)
+
+    # Rename the associated OCR result file if it exists
+    result_dir  = (RESULTS_DIR / folder) if folder else RESULTS_DIR
+    old_txt     = result_dir / f"OCR_{Path(filename).stem}.txt"
+    new_txt     = result_dir / f"OCR_{Path(new_name).stem}.txt"
+    renamed_txt = False
+    if old_txt.exists() and not new_txt.exists():
+        # Update the "File:" header inside the txt to reflect the new filename
+        try:
+            content  = old_txt.read_text(encoding="utf-8")
+            content  = content.replace(f"File: {filename}", f"File: {new_name}", 1)
+            new_txt.write_text(content, encoding="utf-8")
+            old_txt.unlink()
+            renamed_txt = True
+        except Exception:
+            old_txt.rename(new_txt)
+            renamed_txt = True
+
+    return {"ok": True, "new_name": new_name, "result_renamed": renamed_txt}
 
 
 # ── Results download ─────────────────────────────────────────────────────────

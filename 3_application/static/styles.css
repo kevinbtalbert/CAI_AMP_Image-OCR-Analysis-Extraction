@@ -1123,6 +1123,36 @@ code { font-family: "Roboto Mono", Menlo, Monaco, monospace; font-size: 13px; ba
 .files-tree-item:hover .files-tree-delete { opacity: 1; }
 .files-tree-delete:hover { color: var(--red); }
 
+.files-tree-rename {
+  margin-left: 2px;
+  opacity: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--tx-3);
+  padding: 2px;
+  border-radius: 3px;
+  line-height: 1;
+  font-size: 13px;
+  transition: opacity 0.15s, color 0.15s;
+}
+.files-tree-item:hover .files-tree-rename { opacity: 1; }
+.files-tree-rename:hover { color: var(--cldr-blue); }
+
+.files-tree-rename-input {
+  flex: 1;
+  font: inherit;
+  font-size: 14px;
+  padding: 1px 4px;
+  border: 1px solid var(--cldr-blue);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--tx);
+  outline: none;
+  min-width: 0;
+  width: 100%;
+}
+
 /* File browser (right panel) */
 .files-browser {
   flex: 1;
@@ -1228,6 +1258,39 @@ code { font-family: "Roboto Mono", Menlo, Monaco, monospace; font-size: 13px; ba
   transition: opacity 0.15s;
 }
 .file-tile:hover .file-tile-del { opacity: 1; }
+
+.file-tile-rename {
+  position: absolute;
+  bottom: 26px; right: 30px;   /* sits left of the delete button */
+  opacity: 0;
+  background: rgba(0,0,0,0.55);
+  border: none;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 12px;
+  padding: 2px 5px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  line-height: 1;
+}
+.file-tile:hover .file-tile-rename { opacity: 1; }
+.file-tile-rename:hover { background: rgba(0,100,200,0.8); }
+
+.file-tile-rename-input {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 5px;
+  border: none;
+  border-top: 2px solid var(--cldr-blue);
+  background: var(--bg);
+  color: var(--tx);
+  outline: none;
+  width: 100%;
+  text-align: center;
+  z-index: 10;
+}
 
 /* Jobs panel (below the split) */
 .files-jobs-panel {

@@ -955,6 +955,14 @@ async function clearCompletedJobs() {
 // Results tab
 // ---------------------------------------------------------------------------
 
+// Safe store for job results — avoids embedding arbitrary text inside HTML attributes
+const _jobResultStore = new Map();
+
+function copyJobResult(id) {
+  const text = _jobResultStore.get(id) || '';
+  navigator.clipboard.writeText(text).then(() => toast('Copied', 'success'));
+}
+
 function refreshResultsList() {
   const el = document.getElementById('results-list');
   if (!el) return;
@@ -964,6 +972,12 @@ function refreshResultsList() {
     return;
   }
   const sorted = [...done].sort((a,b) => (b.completed_at||'').localeCompare(a.completed_at||''));
+
+  // Populate the result store before rendering HTML so copy buttons always work
+  for (const job of sorted) {
+    if (job.result) _jobResultStore.set(job.id, job.result);
+  }
+
   el.innerHTML = sorted.map(job => `
     <div class="result-card" id="rc-${job.id}">
       <div class="result-card-header" onclick="toggleResultCard('${job.id}')">
@@ -978,7 +992,7 @@ function refreshResultsList() {
           ? `<p style="color:var(--red);font-size:13px">${escHtml(job.error||'')}</p>`
           : `<div class="result-section-label">Analysis Result</div>
              <pre class="result-pre">${escHtml(job.result||'')}</pre>
-             <button class="btn btn-sm btn-ghost" onclick="navigator.clipboard.writeText(${JSON.stringify(job.result||'')}).then(()=>toast('Copied','success'))">Copy Result</button>`
+             <button class="btn btn-sm btn-ghost" onclick="copyJobResult('${job.id}')">Copy Result</button>`
         }
       </div>
     </div>
@@ -1534,11 +1548,15 @@ async function _loadFilesTree() {
     </div>`,
     // Named folder rows
     ...folders.map(f => `
-      <div class="files-tree-item${_filesFolder === f.name ? ' active' : ''}" onclick="filesSelectFolder('${escAttr(f.name)}')">
+      <div class="files-tree-item${_filesFolder === f.name ? ' active' : ''}" id="ftree-${escAttr(f.name)}" onclick="filesSelectFolder('${escAttr(f.name)}')">
         <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3.75 3A1.75 1.75 0 002 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0018 15.25v-8.5A1.75 1.75 0 0016.25 5h-4.836a.25.25 0 01-.177-.073L9.823 3.513A1.75 1.75 0 008.586 3H3.75z"/></svg>
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.name)}</span>
+        <span class="files-tree-label" id="ftree-label-${escAttr(f.name)}"
+              ondblclick="event.stopPropagation();startFolderRename('${escAttr(f.name)}')"
+              title="Double-click to rename"
+              style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(f.name)}</span>
         ${f.result_count ? `<span class="files-tree-result-dot" title="${f.result_count} result${f.result_count > 1 ? 's' : ''}"></span>` : ''}
         <span class="files-tree-count">${f.count}</span>
+        <button class="files-tree-rename" title="Rename folder" onclick="event.stopPropagation();startFolderRename('${escAttr(f.name)}')">✎</button>
         <button class="files-tree-delete" title="Delete folder" onclick="event.stopPropagation();filesDeleteFolder('${escAttr(f.name)}')">✕</button>
       </div>`)
   ].join('');
@@ -1633,6 +1651,7 @@ async function _loadFilesBrowser() {
            onclick="event.stopPropagation();openLightbox('${escAttr(imgSrc(img.name))}','${escAttr(img.name)}')"
            title="Click to enlarge" />
       <div class="file-tile-name" title="${escAttr(img.name)}">${escHtml(img.name)}</div>
+      <button class="file-tile-rename" onclick="event.stopPropagation();startImageRename('${escAttr(img.name)}')" title="Rename">✎</button>
       <button class="file-tile-del" onclick="event.stopPropagation();filesDeleteImage('${escAttr(img.name)}')" title="Delete">✕</button>
     </div>`;
   }).join('');
@@ -1722,6 +1741,63 @@ async function filesDeleteFolder(name) {
   }
 }
 
+function startFolderRename(name) {
+  const labelEl = document.getElementById(`ftree-label-${name}`);
+  if (!labelEl) return;
+
+  // Swap the label span for an inline input
+  const input = document.createElement('input');
+  input.type      = 'text';
+  input.value     = name;
+  input.className = 'files-tree-rename-input';
+  input.onclick   = e => e.stopPropagation();   // don't navigate on click
+  input.onkeydown = e => {
+    e.stopPropagation();
+    if (e.key === 'Enter')  { e.preventDefault(); commitFolderRename(name, input.value.trim()); }
+    if (e.key === 'Escape') { cancelFolderRename(name, labelEl, input); }
+  };
+  input.onblur = () => commitFolderRename(name, input.value.trim());
+
+  labelEl.replaceWith(input);
+  input.select();
+}
+
+async function commitFolderRename(oldName, newName) {
+  // Guard against blur firing after Enter already handled it
+  const inputEl = document.querySelector(`.files-tree-rename-input`);
+  if (!inputEl) return;   // already committed/cancelled
+
+  if (!newName || newName === oldName) {
+    cancelFolderRenameById(oldName);
+    return;
+  }
+  // Remove the input immediately to prevent double-fire on blur
+  inputEl.onblur = null;
+  try {
+    await api('PUT', `/api/folders/${encodeURIComponent(oldName)}/rename`, { new_name: newName });
+    // If we were viewing the renamed folder, stay in it under the new name
+    if (_filesFolder === oldName) _filesFolder = newName;
+    toast(`Renamed to "${newName}"`, 'success');
+    await _loadFilesTree();
+    if (_filesFolder === newName) await _loadFilesBrowser();
+  } catch (e) {
+    toast(e.message, 'error');
+    await _loadFilesTree();  // restore original state
+  }
+}
+
+function cancelFolderRenameById(name) {
+  const input = document.querySelector('.files-tree-rename-input');
+  if (!input) return;
+  input.onblur = null;
+  _loadFilesTree();  // cheapest full reset
+}
+
+function cancelFolderRename(name, labelEl, input) {
+  input.onblur = null;
+  input.replaceWith(labelEl);
+}
+
 async function filesDeleteImage(name) {
   if (!confirm(`Delete "${name}"?`)) return;
   try {
@@ -1731,6 +1807,73 @@ async function filesDeleteImage(name) {
     _updateFilesProcessBtn();
     await _loadFilesBrowser();
   } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+function startImageRename(filename) {
+  const tile    = document.getElementById(`tile-${filename}`);
+  const nameEl  = tile?.querySelector('.file-tile-name');
+  if (!tile || !nameEl) return;
+
+  // Swap the name label for an inline input
+  const input = document.createElement('input');
+  input.type      = 'text';
+  input.value     = filename;
+  input.className = 'file-tile-rename-input';
+  // Select just the stem (before extension) for convenience
+  const dotIdx = filename.lastIndexOf('.');
+  input.onclick   = e => e.stopPropagation();
+  input.onkeydown = e => {
+    e.stopPropagation();
+    if (e.key === 'Enter')  { e.preventDefault(); commitImageRename(filename, input); }
+    if (e.key === 'Escape') { input.onblur = null; nameEl.style.display = ''; input.remove(); }
+  };
+  input.onblur = () => commitImageRename(filename, input);
+
+  nameEl.style.display = 'none';
+  tile.appendChild(input);
+  input.focus();
+  if (dotIdx > 0) input.setSelectionRange(0, dotIdx);
+  else            input.select();
+}
+
+async function commitImageRename(oldName, input) {
+  if (!input.isConnected) return;  // already removed
+  input.onblur = null;             // prevent double-fire
+
+  const newName = input.value.trim();
+  const tile    = document.getElementById(`tile-${oldName}`);
+  const nameEl  = tile?.querySelector('.file-tile-name');
+
+  // Restore display regardless of outcome
+  const restore = () => { if (nameEl) nameEl.style.display = ''; input.remove(); };
+
+  if (!newName || newName === oldName) { restore(); return; }
+
+  try {
+    const resp = await api('PUT', `/api/images/${encodeURIComponent(oldName)}/rename`, {
+      new_name: newName,
+      folder:   _filesFolder || '',
+    });
+    restore();
+    // Update selection state to track the new name
+    if (_filesSelected.has(oldName)) {
+      _filesSelected.delete(oldName);
+      _filesSelected.add(resp.new_name);
+    }
+    if (_filesUseCaseOverrides.has(oldName)) {
+      _filesUseCaseOverrides.set(resp.new_name, _filesUseCaseOverrides.get(oldName));
+      _filesUseCaseOverrides.delete(oldName);
+    }
+    const msg = resp.result_renamed
+      ? `Renamed to "${resp.new_name}" — OCR result updated`
+      : `Renamed to "${resp.new_name}"`;
+    toast(msg, 'success');
+    await _loadFilesBrowser();
+    await _loadFilesTree();          // update result-dot counts
+  } catch (e) {
+    restore();
     toast(e.message, 'error');
   }
 }
