@@ -148,14 +148,18 @@ async function _globalOllamaCheck() {
     const data    = await api('GET', '/api/ollama/status');
     const running = data.running;
     const pulling = !!(data.pull && data.pull.running);
+    const warming = !!data.model_warming;
 
     setActive('pull', pulling);
+
+    // ── Model warm-up banner on Analysis page ──────────────────────────
+    _updateWarmingBanner(warming, data.gpu_in_use);
 
     // ── Ollama header chip ─────────────────────────────────────────────
     setDot('dot-ollama', running ? 'ok' : 'error');
     const lbl = document.getElementById('ollama-chip-label');
     if (lbl) lbl.textContent = running
-      ? `Ollama · ${state.config.local_model || ''}`
+      ? (warming ? `Ollama · loading model…` : `Ollama · ${state.config.local_model || ''}`)
       : 'Ollama offline';
 
     // ── GPU header chip ────────────────────────────────────────────────
@@ -168,14 +172,15 @@ async function _globalOllamaCheck() {
       const g = gpu.gpus[0];
       if (gpuChip) gpuChip.style.display = 'flex';
       if (data.gpu_in_use) {
-        // Model actively loaded in VRAM
         setDot('dot-gpu', 'ok');
         const vramPct = Math.round(g.memory_used_mb / g.memory_total_mb * 100);
         if (gpuLbl) gpuLbl.textContent = `GPU · ${vramPct}% VRAM`;
-      } else {
-        // GPU present & allocated to this session but no model in VRAM yet
+      } else if (warming) {
         setDot('dot-gpu', 'warn');
-        if (gpuLbl) gpuLbl.textContent = `GPU · ready`;
+        if (gpuLbl) gpuLbl.textContent = 'GPU · loading…';
+      } else {
+        setDot('dot-gpu', 'warn');
+        if (gpuLbl) gpuLbl.textContent = 'GPU · ready';
       }
       const chip = document.getElementById('gpu-chip');
       if (chip) chip.title = `${g.name} — ${g.memory_used_mb} / ${g.memory_total_mb} MB · ${g.utilization_pct}% util`;
@@ -189,7 +194,7 @@ async function _globalOllamaCheck() {
       statusPill.style.color = '#ffffff';
       const gpuAvail = gpu.available && gpu.gpus && gpu.gpus.length > 0;
       statusPill.textContent = running
-        ? (data.gpu_in_use ? '● Ollama · GPU active' : (gpuAvail ? '● Ollama · GPU ready' : '● Ollama · CPU'))
+        ? (warming ? '↻ Ollama · loading model' : (data.gpu_in_use ? '● Ollama · GPU active' : (gpuAvail ? '● Ollama · GPU ready' : '● Ollama · CPU')))
         : '○ Ollama';
     }
 
@@ -198,6 +203,31 @@ async function _globalOllamaCheck() {
     if (configDot) configDot.className = `nav-dot ${running ? 'success' : 'warning'}`;
   } catch (_) {}
 }
+
+function _updateWarmingBanner(warming, gpuInUse) {
+  const banner  = document.getElementById('model-warming-banner');
+  const procBtn = document.getElementById('single-process-btn');
+  if (!banner) return;
+
+  if (warming) {
+    banner.style.display = 'flex';
+    if (procBtn && !procBtn.dataset.userDisabled) {
+      procBtn.disabled = true;
+      procBtn.title    = 'Model is loading into GPU — please wait';
+    }
+  } else {
+    banner.style.display = 'none';
+    if (procBtn && !procBtn.dataset.userDisabled) {
+      procBtn.disabled = false;
+      procBtn.title    = '';
+    }
+    if (!warming && gpuInUse && !_warmingToastShown) {
+      _warmingToastShown = true;
+      toast('Model loaded into GPU — ready to process', 'success');
+    }
+  }
+}
+let _warmingToastShown = false;
 
 function setDot(id, status) {
   const el = document.getElementById(id);
@@ -701,10 +731,26 @@ function refreshResultsList() {
       </div>
     </div>
   `).join('');
+
+  // Restore expanded state — pollJobs re-renders every 2 s which would otherwise
+  // collapse any card the user has open.
+  for (const id of _openResultCards) {
+    document.getElementById(`rc-${id}`)?.classList.add('open');
+  }
 }
 
+// Track which result cards are expanded so polling re-renders don't collapse them
+const _openResultCards = new Set();
+
 function toggleResultCard(id) {
-  document.getElementById(`rc-${id}`)?.classList.toggle('open');
+  const card = document.getElementById(`rc-${id}`);
+  if (!card) return;
+  card.classList.toggle('open');
+  if (card.classList.contains('open')) {
+    _openResultCards.add(id);
+  } else {
+    _openResultCards.delete(id);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1249,9 +1295,12 @@ async function _loadFilesBrowser() {
   grid.innerHTML = images.map(img => {
     const sel = _filesSelected.has(img.name);
     const hasResult = _filesResultSet.has(Path_stem(img.name));
+    const ocrBadge = hasResult
+      ? `<button class="file-tile-result-badge" onclick="event.stopPropagation();viewFileResult('${escAttr(img.name)}')" title="View OCR result">OCR ↗</button>`
+      : '';
     return `<div class="file-tile${sel ? ' selected' : ''}" id="tile-${escAttr(img.name)}" onclick="filesToggle('${escAttr(img.name)}')">
       <div class="file-tile-cb"></div>
-      ${hasResult ? '<span class="file-tile-result-badge">OCR</span>' : ''}
+      ${ocrBadge}
       <img src="${imgSrc(img.name)}" alt="${escAttr(img.name)}" loading="lazy" />
       <div class="file-tile-name" title="${escAttr(img.name)}">${escHtml(img.name)}</div>
       <button class="file-tile-del" onclick="event.stopPropagation();filesDeleteImage('${escAttr(img.name)}')" title="Delete">✕</button>
@@ -1435,6 +1484,36 @@ function onFilesDrop(e) {
 function downloadFilesResults() {
   const q = _filesFolder ? `?folder=${encodeURIComponent(_filesFolder)}` : '';
   window.location.href = `/api/results/download${q}`;
+}
+
+async function viewFileResult(filename) {
+  const folder = _filesFolder || '';
+  try {
+    const q    = `?filename=${encodeURIComponent(filename)}${folder ? '&folder=' + encodeURIComponent(folder) : ''}`;
+    const data = await api('GET', `/api/results/read${q}`);
+
+    // Strip the header lines (File/Folder/Use case/Date/─────) from the content
+    // so only the actual OCR text is shown in the preview.
+    const lines   = (data.content || '').split('\n');
+    const sepIdx  = lines.findIndex(l => l.startsWith('─'));
+    const body    = sepIdx >= 0 ? lines.slice(sepIdx + 1).join('\n').trimStart() : data.content;
+
+    // Reuse the existing result modal
+    document.getElementById('modal-title').textContent    = filename;
+    document.getElementById('modal-subtitle').textContent = folder ? `Folder: ${folder}` : 'All Files';
+    const imgEl = document.getElementById('modal-image');
+    if (imgEl) {
+      const src = folder
+        ? `/images/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}`
+        : `/images/${encodeURIComponent(filename)}`;
+      imgEl.src   = src;
+      imgEl.style.display = 'block';
+    }
+    document.getElementById('modal-result').textContent = body;
+    document.getElementById('result-modal').classList.add('open');
+  } catch (e) {
+    toast('Could not load result: ' + e.message, 'error');
+  }
 }
 
 // ---------------------------------------------------------------------------

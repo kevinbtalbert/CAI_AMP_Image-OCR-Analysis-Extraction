@@ -118,7 +118,7 @@ USE_CASE_CONFIG: dict[str, dict] = {
         "user": "Transcribe all printed or typed text visible in this image.",
         "render": None,
         "options": {"temperature": 0.05, "repeat_penalty": 1.4, "repeat_last_n": 128,
-                    "top_k": 10, "top_p": 0.5, "num_ctx": 65536},
+                    "top_k": 10, "top_p": 0.5, "num_ctx": 16384},
     },
     "Transcribing Handwritten Text": {
         # Same reasoning as Transcribing Typed Text.
@@ -133,7 +133,7 @@ USE_CASE_CONFIG: dict[str, dict] = {
         "user": "Transcribe all handwritten text visible in this image.",
         "render": None,
         "options": {"temperature": 0.05, "repeat_penalty": 1.4, "repeat_last_n": 128,
-                    "top_k": 10, "top_p": 0.5, "num_ctx": 65536},
+                    "top_k": 10, "top_p": 0.5, "num_ctx": 16384},
     },
     "Transcribing Forms": {
         "schema": {
@@ -164,7 +164,7 @@ USE_CASE_CONFIG: dict[str, dict] = {
         "user": "Extract every field and its filled-in value from this form.",
         "render": _render_form,
         "options": {"temperature": 0.05, "repeat_penalty": 1.3, "repeat_last_n": 64,
-                    "top_k": 20, "top_p": 0.6, "num_ctx": 65536},
+                    "top_k": 20, "top_p": 0.6, "num_ctx": 16384},
     },
     "Complicated Document QA": {
         "schema": {
@@ -352,18 +352,31 @@ def _ollama_env() -> dict:
     new_paths = ":".join(p for p in lib_paths if p not in existing)
     env["LD_LIBRARY_PATH"] = f"{new_paths}:{existing}" if existing else new_paths
 
-    # ── GPU count and explicit CUDA device selection ──────────────────────────
+    # ── GPU layer offloading ──────────────────────────────────────────────────
+    # CRITICAL: OLLAMA_NUM_GPU is the number of MODEL LAYERS to offload to GPU,
+    # NOT the number of physical GPUs.  Setting it to 1 puts only 1 layer on GPU
+    # and loads the remaining ~27 layers (~9 GB) into CPU RAM — causing the
+    # "model requires more system memory" error when RAM < model size.
+    #
+    # Strategy:
+    #   GPU detected  → do NOT set OLLAMA_NUM_GPU (Ollama auto-detects all layers)
+    #                   OR set it to 999 to force all layers on GPU
+    #   No GPU        → set OLLAMA_NUM_GPU=0 to explicitly select CPU mode
     n_gpu = _count_nvidia_gpus()
     if n_gpu > 0:
-        env["OLLAMA_NUM_GPU"] = str(n_gpu)
-        # If CUDA_VISIBLE_DEVICES is not set, default to "0" (first GPU).
-        # In some CML container configurations the runtime grants GPU access
-        # but doesn't set this variable, which can prevent CUDA init.
+        # Leave OLLAMA_NUM_GPU unset so Ollama auto-detects the layer count,
+        # which defaults to "all layers that fit in VRAM".
+        env.pop("OLLAMA_NUM_GPU", None)
+        # Ensure CUDA_VISIBLE_DEVICES is set so the CUDA runtime initialises.
         if not env.get("CUDA_VISIBLE_DEVICES"):
             env["CUDA_VISIBLE_DEVICES"] = "0"
-        print(f"[ollama] nvidia-smi found {n_gpu} GPU(s) — OLLAMA_NUM_GPU={n_gpu}, CUDA_VISIBLE_DEVICES={env['CUDA_VISIBLE_DEVICES']}")
+        # Flash Attention reduces KV-cache memory significantly with no quality loss.
+        env.setdefault("OLLAMA_FLASH_ATTENTION", "1")
+        print(f"[ollama] nvidia-smi found {n_gpu} GPU(s) — CUDA_VISIBLE_DEVICES={env['CUDA_VISIBLE_DEVICES']}, OLLAMA_FLASH_ATTENTION=1")
+        print("[ollama] OLLAMA_NUM_GPU not set — Ollama will auto-load all layers onto GPU")
     else:
-        print("[ollama] No GPU detected via nvidia-smi — Ollama will run on CPU")
+        env["OLLAMA_NUM_GPU"] = "0"
+        print("[ollama] No GPU detected via nvidia-smi — setting OLLAMA_NUM_GPU=0 (CPU mode)")
 
     # Keep VRAM reservation minimal so the model fits without unnecessary fallback
     env.setdefault("OLLAMA_GPU_OVERHEAD", "0")
@@ -597,11 +610,11 @@ def _use_case_options(use_case: str, cfg: dict) -> dict:
     else:
         base_predict = user_max if user_max else 4096
 
-    # num_gpu in the Ollama request is the number of *layers* to offload to GPU,
-    # NOT the number of physical GPUs. -1 means "all layers" which is what we
-    # want. Setting it to 1 would put only 1 layer on GPU and load ~9 GB of
-    # remaining layers into CPU RAM, causing the "not enough system memory" error.
-    base    = {"num_predict": base_predict, "num_gpu": -1}
+    # num_gpu in the Ollama request = number of *model layers* to offload to GPU.
+    # 999 means "all layers" on all platforms (safe large number; Ollama caps it
+    # at the actual layer count). Do NOT use -1 — its behaviour on Linux varies
+    # across Ollama versions and may default to CPU instead of all-GPU.
+    base    = {"num_predict": base_predict, "num_gpu": 999}
     uc_opts = uc.get("options", {})
     return {**base, **uc_opts}
 
@@ -752,37 +765,64 @@ def stream_analyze_image(image_path: Path, use_case: str, cfg: dict):
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
 
-def prewarm_model(model: str) -> None:
+# Set to True while the startup pre-warm is in progress so the UI can
+# show a "loading model" state and block premature inference requests.
+_model_warming: bool = False
+_model_ready:   bool = False
+
+
+def prewarm_model(model: str, max_attempts: int = 5) -> None:
     """
     Load the model into GPU VRAM by sending a tiny text-only request.
-    Called once on startup so the first real image request doesn't pay
-    the cold-load penalty (typically 5-15 s for an 8 B model).
 
-    num_gpu is passed explicitly in the request options so even if the env
-    vars were somehow missed, Ollama is still forced to use the GPU.
+    Retries up to *max_attempts* times with a back-off pause between
+    attempts because Ollama sometimes needs a moment after starting before
+    CUDA initialises fully (the first request can race the CUDA runtime
+    and return a spurious "not enough system memory" error).
     """
-    try:
-        resp = requests.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model":   model,
-                "prompt":  "hi",
-                "stream":  False,
-                # num_gpu = -1 means "all layers on GPU" in Ollama's API.
-                # Do NOT confuse with the number of physical GPUs.
-                "options": {"num_predict": 1, "num_gpu": -1},
-            },
-            timeout=120,
-        )
-        if resp.status_code == 200:
-            print(f"[ollama] Model '{model}' pre-warmed into GPU VRAM (num_gpu=-1 = all layers).")
-        else:
-            body = ""
-            try: body = resp.json().get("error", resp.text)
-            except Exception: body = resp.text
-            print(f"[ollama] Pre-warm returned {resp.status_code}: {body}")
-    except Exception as e:
-        print(f"[ollama] Pre-warm skipped: {e}")
+    import time as _time
+
+    global _model_warming, _model_ready
+    _model_warming = True
+    _model_ready   = False
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            print(f"[ollama] Pre-warm attempt {attempt}/{max_attempts} for '{model}'…")
+            resp = requests.post(
+                f"{OLLAMA_BASE_URL}/api/generate",
+                json={
+                    "model":   model,
+                    "prompt":  "hi",
+                    "stream":  False,
+                # num_gpu = 999 forces all model layers onto GPU (safe large number;
+                # Ollama caps at the actual layer count automatically).
+                "options": {"num_predict": 1, "num_gpu": 999},
+                },
+                timeout=300,   # large models can take minutes to load into VRAM
+            )
+            if resp.status_code == 200:
+                print(f"[ollama] ✓ Model '{model}' loaded into GPU VRAM on attempt {attempt}.")
+                _model_warming = False
+                _model_ready   = True
+                return
+            else:
+                body = ""
+                try:    body = resp.json().get("error", resp.text)
+                except Exception: body = resp.text
+                print(f"[ollama] Pre-warm attempt {attempt} returned {resp.status_code}: {body[:200]}")
+        except Exception as e:
+            print(f"[ollama] Pre-warm attempt {attempt} exception: {e}")
+
+        if attempt < max_attempts:
+            wait = attempt * 5   # 5 s, 10 s, 15 s, 20 s …
+            print(f"[ollama] Retrying in {wait} s…")
+            _time.sleep(wait)
+
+    print(f"[ollama] ✗ Pre-warm failed after {max_attempts} attempts. "
+          "Model will load on first inference request.")
+    _model_warming = False
+    _model_ready   = False
 
 
 # ---------------------------------------------------------------------------
@@ -1201,6 +1241,24 @@ def api_folder_results(name: str):
     return {"results": files, "folder": name}
 
 
+@app.get("/api/results/read")
+def api_result_read(filename: str, folder: str = ""):
+    """
+    Return the text content of a single OCR result file.
+
+    Query params:
+      filename  – the image filename (e.g. 'photo.png'); the endpoint
+                  resolves to OCR_<stem>.txt automatically.
+      folder    – optional folder name; empty string means root.
+    """
+    stem     = Path(filename).stem
+    txt_name = f"OCR_{stem}.txt"
+    path     = (RESULTS_DIR / folder / txt_name) if folder else (RESULTS_DIR / txt_name)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"No result found for {filename}")
+    return {"filename": filename, "folder": folder, "content": path.read_text(encoding="utf-8")}
+
+
 # ── Single process ──────────────────────────────────────────────────────────
 
 @app.post("/api/process")
@@ -1312,16 +1370,18 @@ def get_ollama_status():
         pull = dict(_pull_state)
 
     return {
-        "installed":    installed,
-        "running":      running,
-        "models":       models,
-        "loaded":       loaded,
-        "pull":         pull,
-        "catalog":      LOCAL_MODEL_CATALOG,
-        "gpu":          gpu,
+        "installed":     installed,
+        "running":       running,
+        "models":        models,
+        "loaded":        loaded,
+        "pull":          pull,
+        "catalog":       LOCAL_MODEL_CATALOG,
+        "gpu":           gpu,
         "gpu_allocated": gpu_allocated,
-        "gpu_in_use":   gpu_in_use,
-        "gpu_ready":    gpu_ready,
+        "gpu_in_use":    gpu_in_use,
+        "gpu_ready":     gpu_ready,
+        "model_warming": _model_warming,   # True while startup pre-warm is in progress
+        "model_ready":   _model_ready,     # True once pre-warm confirmed success
     }
 
 
