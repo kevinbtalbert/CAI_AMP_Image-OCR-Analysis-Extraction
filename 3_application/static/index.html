@@ -160,7 +160,9 @@
               </div>
 
               <div id="single-preview-wrap" class="image-preview-wrap" style="display:none">
-                <img id="single-preview" class="image-preview" src="" alt="preview" />
+                <img id="single-preview" class="image-preview img-zoomable" src="" alt="preview"
+                     onclick="openLightbox(this.src, document.getElementById('single-image-select').value)"
+                     title="Click to enlarge" />
               </div>
 
               <div class="process-btn-row" id="single-process-btn-row">
@@ -508,7 +510,9 @@
       </button>
     </div>
     <div class="modal-body">
-      <img id="modal-image" src="" alt="" class="modal-image" />
+      <img id="modal-image" src="" alt="" class="modal-image img-zoomable"
+           onclick="openLightbox(this.src, document.getElementById('modal-title').textContent)"
+           title="Click to enlarge" />
       <div class="result-section-label">Analysis Result</div>
       <pre class="result-pre" id="modal-result"></pre>
     </div>
@@ -517,6 +521,16 @@
       <button class="btn btn-primary" onclick="document.getElementById('result-modal').classList.remove('open')">Close</button>
     </div>
   </div>
+</div>
+
+<!-- ── Image Lightbox ─────────────────────────────────────────────────── -->
+<div class="img-lightbox-backdrop" id="img-lightbox" onclick="closeLightbox(event)">
+  <button class="img-lightbox-close" onclick="document.getElementById('img-lightbox').classList.remove('open')"
+    title="Close">
+    <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/></svg>
+  </button>
+  <img id="img-lightbox-img" src="" alt="" class="img-lightbox-img" />
+  <div class="img-lightbox-caption" id="img-lightbox-caption"></div>
 </div>
 
 <!-- ── Toast ──────────────────────────────────────────────────────────── -->

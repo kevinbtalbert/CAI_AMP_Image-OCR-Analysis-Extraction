@@ -804,6 +804,32 @@ function copyModalResult() {
 }
 
 // ---------------------------------------------------------------------------
+// Image lightbox — click any thumbnail to enlarge
+// ---------------------------------------------------------------------------
+
+function openLightbox(src, caption) {
+  const lb  = document.getElementById('img-lightbox');
+  const img = document.getElementById('img-lightbox-img');
+  const cap = document.getElementById('img-lightbox-caption');
+  img.src         = src;
+  cap.textContent = caption || '';
+  lb.classList.add('open');
+}
+
+function closeLightbox(e) {
+  if (e.target.id === 'img-lightbox' || e.target.id === 'img-lightbox-img')
+    document.getElementById('img-lightbox').classList.remove('open');
+}
+
+// Close lightbox on Escape key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.getElementById('img-lightbox')?.classList.remove('open');
+    document.getElementById('result-modal')?.classList.remove('open');
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Images tab
 // ---------------------------------------------------------------------------
 
@@ -1346,7 +1372,9 @@ async function _loadFilesBrowser() {
     return `<div class="file-tile${sel ? ' selected' : ''}" id="tile-${escAttr(img.name)}" onclick="filesToggle('${escAttr(img.name)}')">
       <div class="file-tile-cb"></div>
       ${ocrBadge}
-      <img src="${imgSrc(img.name)}" alt="${escAttr(img.name)}" loading="lazy" />
+      <img src="${imgSrc(img.name)}" alt="${escAttr(img.name)}" loading="lazy"
+           onclick="event.stopPropagation();openLightbox('${escAttr(imgSrc(img.name))}','${escAttr(img.name)}')"
+           title="Click to enlarge" />
       <div class="file-tile-name" title="${escAttr(img.name)}">${escHtml(img.name)}</div>
       <button class="file-tile-del" onclick="event.stopPropagation();filesDeleteImage('${escAttr(img.name)}')" title="Delete">✕</button>
     </div>`;

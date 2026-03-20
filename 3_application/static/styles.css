@@ -1263,3 +1263,58 @@ code { font-family: "Roboto Mono", Menlo, Monaco, monospace; font-size: 13px; ba
 .files-job-status.processing { color: var(--blue); }
 .files-job-status.complete   { color: var(--green); }
 .files-job-status.error      { color: var(--red); }
+
+/* ── Image Lightbox ──────────────────────────────────────────────────────── */
+.img-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(0, 0, 0, 0.82);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 32px;
+  backdrop-filter: blur(4px);
+}
+.img-lightbox-backdrop.open { display: flex; }
+.img-lightbox-img {
+  max-width: 90vw;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: var(--radius);
+  box-shadow: 0 8px 48px rgba(0,0,0,0.6);
+  cursor: zoom-out;
+}
+.img-lightbox-caption {
+  color: rgba(255,255,255,0.7);
+  font-size: 13px;
+  max-width: 80vw;
+  text-align: center;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.img-lightbox-close {
+  position: fixed;
+  top: 18px;
+  right: 22px;
+  background: rgba(255,255,255,0.12);
+  border: none;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #fff;
+  transition: background 0.15s;
+}
+.img-lightbox-close:hover { background: rgba(255,255,255,0.25); }
+.img-lightbox-close svg   { width: 18px; height: 18px; }
+
+/* Make thumbnail images feel clickable */
+.file-tile img         { cursor: zoom-in; }
+.img-zoomable          { cursor: zoom-in; }
